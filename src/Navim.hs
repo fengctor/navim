@@ -24,7 +24,7 @@ import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
 
 navim :: IO ()
-navim = do initState <- buildInitialState
+navim = do initState <- buildState Nothing
            endState  <- defaultMain navimApp initState
            let navPath = mconcat $ intersperse "/" $ reverse $ navHistory endState
            putStrLn navPath
@@ -33,6 +33,7 @@ data NavimState =
   NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
     , navHistory :: [FilePath]
+    , commandRev :: String
     } deriving (Show, Eq)
 
 data ResourceName = ResourceName deriving (Show, Eq, Ord)
@@ -56,25 +57,29 @@ navimApp =
                                           ]
     }
 
-buildInitialState :: IO NavimState
-buildInitialState = do curdir      <- getCurrentDirectory
-                       rawContents <- getDirectoryContents curdir
-                       contents    <- traverse
-                                        (\fp -> doesFileExist fp >>=
-                                           \isFile -> return $ if isFile then File fp else Directory fp)
-                                        rawContents
-                       case NE.nonEmpty contents of
-                            Nothing -> die "Should never happen (current directory \".\" always here)"
-                            Just ne -> return $
-                                         NavimState
-                                           { navimStatePaths = makeNonEmptyCursor ne
-                                           , navHistory = []
-                                           }
+buildState :: Maybe NavimState -> IO NavimState
+buildState prevState = do curdir      <- getCurrentDirectory
+                          rawContents <- getDirectoryContents curdir
+                          contents    <- traverse
+                                           (\fp -> do isFile <- doesFileExist fp
+                                                      return $ if isFile then File fp
+                                                                         else Directory fp)
+                                           rawContents
+                          case NE.nonEmpty contents of
+                               Nothing -> die "Should never happen (current directory \".\" always here)"
+                               Just ne -> return $
+                                            NavimState
+                                              { navimStatePaths = makeNonEmptyCursor ne
+                                              , navHistory = []
+                                              , commandRev = case prevState of
+                                                                  Nothing -> ""
+                                                                  Just ps -> commandRev ps
+                                              }
 
 drawNavim :: NavimState -> [Widget ResourceName]
 drawNavim ns = [padBottom Max pathsWidget
                 <=>
-                str "Gary Feng"
+                str (reverse $ commandRev ns)
                ]
   where pathsCursor = navimStatePaths ns
         pathsWidget = vBox $ mconcat
@@ -91,6 +96,8 @@ drawFilePath selected dc = decorate $ str $ getPath dc
                         File _      -> withAttr $ (if selected then ("selected" <>) else id) "file"
                         Directory _ -> withAttr $ (if selected then ("selected" <>) else id) "dir"
 
+-- BEGIN Event Handler Helpers
+
 moveCursorWith :: (NonEmptyCursor DirContent -> Maybe (NonEmptyCursor DirContent)) ->
                   NavimState ->
                   EventM n (Next NavimState)
@@ -99,34 +106,54 @@ moveCursorWith moveFn state = continue $
        Nothing     -> state
        Just newNec -> state {navimStatePaths = newNec}
 
+performNavigate :: NavimState -> EventM n (Next NavimState)
+performNavigate s = case nonEmptyCursorCurrent $ navimStatePaths s of
+                                File _       -> continue s
+                                Directory fp -> do liftIO $ setCurrentDirectory fp
+                                                   let newHistory = case (navHistory s, fp) of
+                                                                         (ps  , "." ) -> ps
+                                                                         ([]  , "..") -> [".."]
+                                                                         ("..":ps, "..") -> "..":"..":ps
+                                                                         (p:ps, "..") -> ps
+                                                                         (ps  , next) -> next:ps
+                                                   s' <- liftIO $ buildState $ Just s
+                                                   continue $ s' {navHistory = newHistory}
+
+colonCommand :: NavimState -> EventM n (Next NavimState)
+colonCommand s = case reverse $ commandRev s of
+                      ":q" -> halt s
+                      _    -> continue s {commandRev = []}
+
+-- END Event Handler Helpers
+
 handleEvent :: NavimState -> BrickEvent n e -> EventM n (Next NavimState)
 handleEvent s e =
   case e of
        VtyEvent vtye ->
          case vtye of
-              --EvKey (KChar ':') [] -> do cmd <- liftIO getLine -- TODO: how do
-                                         --if cmd == "q" then halt s else continue s
-              EvKey (KChar 'q') [] -> halt s
-              EvKey (KChar 'j') [] -> moveCursorWith nonEmptyCursorSelectNext s
-              EvKey (KChar 'k') [] -> moveCursorWith nonEmptyCursorSelectPrev s
-              EvKey (KChar 'r') [] -> do liftIO $ createDirectory "yeet"
-                                         s' <- liftIO buildInitialState
-                                         continue s'
+              EvKey (KChar ':') [] -> continue $ s {commandRev = ':' : commandRev s}
+              EvKey key@(KChar 'j') [] -> colonCommandOr (moveCursorWith nonEmptyCursorSelectNext s) key
+              EvKey key@(KChar 'k') [] -> colonCommandOr (moveCursorWith nonEmptyCursorSelectPrev s) key
+              {-EvKey (KChar 'r') [] -> do liftIO $ createDirectory "yeet"
+                                         s' <- liftIO $ buildState $ Just s
+                                         continue s'-}
+              EvKey key@(KChar _)  [] -> colonCommandOr (continue s) key
 
               EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
-              EvKey KUp []   -> moveCursorWith nonEmptyCursorSelectPrev s
+              EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
 
-              EvKey KEnter [] -> case nonEmptyCursorCurrent $ navimStatePaths s of
-                                      File _       -> continue s
-                                      Directory fp -> do liftIO $ setCurrentDirectory fp
-                                                         let newHistory = case (navHistory s, fp) of
-                                                                               (ps  , "." ) -> ps
-                                                                               ([]  , "..") -> [".."]
-                                                                               ("..":ps, "..") -> "..":"..":ps
-                                                                               (p:ps, "..") -> ps
-                                                                               (ps  , next) -> next:ps
-                                                         s' <- liftIO buildInitialState
-                                                         continue $ s' {navHistory = newHistory}
+              EvKey KBS    [] -> colonCommandOr (continue s) KBS
+              EvKey KEnter [] -> colonCommandOr (performNavigate s) KEnter
+              EvKey KEsc   [] -> continue $ s {commandRev = []}
               _ -> continue s
        _ -> continue s
   where
+    colonCommandOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
+    colonCommandOr elseAction key =
+      case (commandRev s, key) of
+           ([], _)       -> elseAction
+           (c:cs, KBS)   -> continue $ s {commandRev = cs}
+           (cs, KEnter)  -> colonCommand s
+           (cs, KChar c) -> do s' <- liftIO $ buildState $ Just s
+                               continue $ s' {commandRev = c:cs}
+           (_, _)        -> continue s
