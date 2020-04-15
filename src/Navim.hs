@@ -17,6 +17,7 @@ import Brick.AttrMap
 import Brick.Main
 import Brick.Types
 import Brick.Util
+import Brick.Widgets.Border
 import Brick.Widgets.Core
 
 import Cursor.Simple.List.NonEmpty
@@ -48,6 +49,9 @@ getPath :: DirContent -> FilePath
 getPath (File fp)      = fp
 getPath (Directory fp) = fp
 
+nonEmptyCursorReset :: NonEmptyCursor a -> NonEmptyCursor a
+nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
+
 -- TUI App Components
 navimApp :: App NavimState e ResourceName
 navimApp =
@@ -59,43 +63,44 @@ navimApp =
     , appAttrMap = const $ attrMap mempty [ ("selected", withStyle (fg green) underline)
                                           , ("file", fg white)
                                           , ("dir", fg brightCyan)
-                                          , ("header", black `on` white)
+                                          , ("header", fg green)
                                           ]
     }
 
 
 -- State Transformer
 buildState :: Maybe NavimState -> IO NavimState
-buildState prevState = do curdir      <- getCurrentDirectory
-                          rawContents <- getDirectoryContents curdir
-                          contents    <- for rawContents $ \fp ->
-                                           do isFile <- doesFileExist fp
-                                              return $ if isFile then File fp
-                                                                 else Directory fp
-                          case NE.nonEmpty contents of
-                               Nothing -> die "Should never happen (current directory \".\" always here)"
-                               Just ne -> return $
-                                            case prevState of
-                                                 Nothing -> NavimState
-                                                              { navimStatePaths = makeNonEmptyCursor ne
-                                                              , navHistory = []
-                                                              , commandRev = ""
-                                                              }
-                                                 Just ps -> ps {navimStatePaths = adjustCursor
-                                                                                    (navimStatePaths ps)
-                                                                                    (makeNonEmptyCursor ne)}
-  where adjustCursor oldNec = moveNext (length $ nonEmptyCursorPrev oldNec)
-        moveNext 0 newNec = newNec
-        moveNext n newNec = case nonEmptyCursorSelectNext newNec of
-                                 Nothing   -> newNec
-                                 Just nec' -> moveNext (n - 1) nec'
+buildState prevState =
+  do curdir      <- getCurrentDirectory
+     rawContents <- getDirectoryContents curdir
+     contents    <- for rawContents $ \fp ->
+                      do isFile <- doesFileExist fp
+                         return $ if isFile then File fp
+                                            else Directory fp
+     case NE.nonEmpty contents of
+          Nothing -> die "Should never happen (current directory \".\" always here)"
+          Just ne -> return $
+                       case prevState of
+                            Nothing -> NavimState
+                                         { navimStatePaths = makeNonEmptyCursor ne
+                                         , navHistory = []
+                                         , commandRev = ""
+                                         }
+                            Just ps -> ps {navimStatePaths = adjustCursor
+                                                               (navimStatePaths ps)
+                                                               (makeNonEmptyCursor ne)}
+  where adjustCursor oldNec = moveNextBy (length $ nonEmptyCursorPrev oldNec)
+        moveNextBy 0 newNec = newNec
+        moveNextBy n newNec = case nonEmptyCursorSelectNext newNec of
+                                   Nothing   -> newNec
+                                   Just nec' -> moveNextBy (n - 1) nec'
 
 -- UI Drawer
 drawNavim :: NavimState -> [Widget ResourceName]
 drawNavim ns = [
-                 withAttr "header" (str "navim - a (WIP) file manager written in Haskell by Gary Feng")
+                 border (padRight Max $ withAttr "header" (str "navim - a (WIP) file manager written in Haskell by Gary Feng"))
                  <=>
-                 padBottom Max pathsWidget
+                 border (padBottom Max pathsWidget)
                  <=>
                  str (reverse $ commandRev ns)
                ]
@@ -109,9 +114,10 @@ drawNavim ns = [
 drawFilePath :: Bool -> DirContent -> Widget n
 drawFilePath selected dc = decorate $ str $ getPath dc
 -- TODO: how to mix attributes
-  where decorate = case dc of
-                        File      _ -> withAttr $ (if selected then ("selected" <>) else id) "file"
-                        Directory _ -> withAttr $ (if selected then ("selected" <>) else id) "dir"
+  where decorate =
+          case dc of
+               File      _ -> withAttr $ (if selected then ("selected" <>) else id) "file"
+               Directory _ -> withAttr $ (if selected then ("selected" <>) else id) "dir"
 
 -- BEGIN Event Handler Helpers
 
@@ -126,15 +132,17 @@ moveCursorWith move state = continue $
 performNavigate :: NavimState -> EventM n (Next NavimState)
 performNavigate s = case nonEmptyCursorCurrent $ navimStatePaths s of
                          File      _  -> continue s
-                         Directory fp -> do liftIO $ setCurrentDirectory fp
-                                            let newHistory = case (navHistory s, fp) of
-                                                                  (ps  , "." ) -> ps
-                                                                  ([]  , "..") -> [".."]
-                                                                  ("..":ps, "..") -> "..":"..":ps
-                                                                  (p:ps, "..") -> ps
-                                                                  (ps  , next) -> next:ps
-                                            s' <- liftIO $ buildState $ Just s
-                                            continue $ s' {navHistory = newHistory}
+                         Directory fp ->
+                           do liftIO $ setCurrentDirectory fp
+                              let newHistory = case (navHistory s, fp) of
+                                                    (ps  , "." ) -> ps
+                                                    ([]  , "..") -> [".."]
+                                                    ("..":ps, "..") -> "..":"..":ps
+                                                    (p:ps, "..") -> ps
+                                                    (ps  , next) -> next:ps
+                              s' <- liftIO $ buildState $
+                                      Just s {navimStatePaths = nonEmptyCursorReset (navimStatePaths s)}
+                              continue $ s' {navHistory = newHistory}
 
 colonCommand :: NavimState -> EventM n (Next NavimState)
 colonCommand s = case reverse $ commandRev s of
