@@ -37,16 +37,29 @@ navim = do
 
 -- TODO: - add "Mode" sum type and record
 --       - draw dialog and handle input based on current Mode
-data NavimState =
-  NavimState
+data NavimState = NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
     , navHistory :: [FilePath]
-    , commandRev :: String
+    --, commandRev :: String -- TODO: bye
+    , mode :: Mode
     } deriving (Show, Eq)
 
-data ResourceName = ResourceName deriving (Show, Eq, Ord)
+data Mode
+    = Navigation                       -- normal file navigation
+    | Colon { colonInputReversed :: String }   -- colon commands: ends when input is empty or enter pressed
+    | Input { prompt :: String         -- TODO: maybe sum type for prompt?
+            , responseInput :: String  -- TODO: better data structure for fast snoc?
+            }                          -- waiting for user input with a given prompt
+    deriving (Show, Eq)
 
-data DirContent = File FilePath | Directory FilePath deriving (Show, Eq, Ord)
+data ResourceName
+    = ResourceName
+    deriving (Show, Eq, Ord)
+
+data DirContent
+    = File FilePath
+    | Directory FilePath
+    deriving (Show, Eq, Ord)
 
 getPath :: DirContent -> FilePath
 getPath (File fp)      = fp
@@ -58,24 +71,20 @@ nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
 -- TUI App Components
 navimApp :: App NavimState e ResourceName
 navimApp =
-  App
-    { appDraw = drawNavim
-    , appChooseCursor = showFirstCursor
-    , appHandleEvent = handleEvent
-    , appStartEvent = pure
-    -- TODO: how to mix attributes
-    , appAttrMap = const $
-          attrMap
-              mempty
-              [ ("selected", withStyle (fg green) underline)
-              , ("file", fg white)
-              , ("dir", fg brightCyan)
-              , ("selectedfile", withStyle (fg white) underline)
-              , ("selecteddir", withStyle (fg brightCyan) underline)
-              , ("header", fg green)
-              ]
-    }
-
+  App { appDraw = drawNavim
+      , appChooseCursor = showFirstCursor
+      , appHandleEvent = handleEvent
+      , appStartEvent = pure
+      , appAttrMap = const $
+            attrMap
+                mempty
+                [ ("file", fg white)
+                , ("dir", fg brightCyan)
+                , ("file" <> "selected", withStyle currentAttr underline)
+                , ("dir" <> "selected", withStyle (bg green) underline)
+                , ("header", fg white)
+                ]
+      }
 
 -- State Transformer
 buildState :: Maybe NavimState -> IO NavimState
@@ -92,7 +101,8 @@ buildState prevState = do
                     Nothing -> NavimState
                                    { navimStatePaths = makeNonEmptyCursor ne
                                    , navHistory = []
-                                   , commandRev = ""
+                                   --, commandRev = ""
+                                   , mode = Navigation
                                    }
                     Just ps -> ps { navimStatePaths =
                                         adjustCursor
@@ -109,18 +119,29 @@ buildState prevState = do
 drawNavim :: NavimState -> [Widget ResourceName]
 drawNavim ns =
     [
-      (padRight Max $
+      border (padRight Max $
          withAttr "header" (str "navim - a (WIP) file manager written in Haskell by Gary Feng"))
       <=>
-      border (padBottom Max pathsWidget)
+      padBottom Max pathsWidget
       <=>
       (padRight Max $
-          if null (commandRev ns)
+          case mode ns of
+              Navigation ->
+                  str "-- NAVIGATION --"
+              Colon reversedInput ->
+                  showCursor
+                      ResourceName
+                      (Location (textWidth reversedInput, 0)) -- end of colon command string
+                      (str . reverse $ reversedInput)
+              Input prompt input ->
+                  str "TODOTODOTODO"
+      )
+          {-if null (commandRev ns)
               then str "-- NAVIGATION --"
               else showCursor
                        ResourceName
                        (Location (textWidth $ commandRev ns, 0)) -- end of colon command string
-                       (str . reverse $ commandRev ns))
+                       (str . reverse $ commandRev ns))-}
     ]
   where
     pathsCursor = navimStatePaths ns
@@ -138,16 +159,59 @@ drawNavim ns =
           ]
 
 drawFilePath :: Bool -> DirContent -> Widget n
-drawFilePath selected dc = decorate . str $ getPath dc
+drawFilePath selected dc = decorate . str . getPath $ dc
 -- TODO: how to mix attributes
   where
     decorate =
         withAttr
-        . attrName
-        . bool id ("selected" ++) selected
+        . bool id (<> "selected") selected
         $ case dc of
               File      _ -> "file"
               Directory _ -> "dir"
+
+-- Event Handler
+handleEvent :: NavimState -> BrickEvent n e -> EventM n (Next NavimState)
+handleEvent s e =
+    case e of
+        VtyEvent vtye ->
+            case vtye of
+                EvKey key@(KChar ':') [] -> colonModeOr (continue s { mode = Colon ":" }) key
+
+                EvKey key@(KChar 'j') [] ->
+                    colonModeOr (moveCursorWith nonEmptyCursorSelectNext s) key
+                EvKey key@(KChar 'k') [] ->
+                    colonModeOr (moveCursorWith nonEmptyCursorSelectPrev s) key
+                EvKey key@(KChar _)   [] ->
+                    colonModeOr (continue s) key
+
+                EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
+                EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
+
+                EvKey KBS    [] -> colonModeOr (continue s) KBS
+                EvKey KEnter [] -> colonModeOr (performNavigate s) KEnter
+                EvKey KEsc   [] -> continue s { mode = Navigation }
+                _ -> continue s
+        _ -> continue s
+  where
+    colonModeOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
+    colonModeOr elseAction key =
+        case (mode s, key) of
+            (Navigation, _) -> elseAction
+
+            -- TODO: lens please...
+            (Colon input, KChar c) ->
+                continue s { mode = Colon { colonInputReversed = c:input } }
+            {- (cs, KChar c) -> do s' <- liftIO $ buildState $ Just s
+                                continue s' {commandRev = c:cs} -}
+            (Colon [c], KBS) ->
+                continue s { mode = Navigation }
+            (Colon (c:cs), KBS) ->
+                continue s { mode = Colon { colonInputReversed = cs } } -- Yikes unsafe...
+            (Colon cs, KEnter) -> colonCommand s . reverse $ cs
+
+            (Input _ _, _) -> continue s -- TODO!!!!!!!!
+
+            (_, _)        -> continue s
 
 {- BEGIN Event Handler Helpers -}
 
@@ -174,8 +238,9 @@ performNavigate s = case nonEmptyCursorCurrent $ navimStatePaths s of
                             s' <- liftIO . buildState $
                                       Just s { navimStatePaths =
                                                    nonEmptyCursorReset (navimStatePaths s) }
-                            continue $ s' { navHistory = newHistory }
+                            continue s' { navHistory = newHistory }
 
+-- TODO: move this to a safe directory ops module?
 createDirectorySafe :: FilePath -> IO Bool
 createDirectorySafe fp = do
     curdir      <- getCurrentDirectory
@@ -184,49 +249,15 @@ createDirectorySafe fp = do
         then return False
         else True <$ createDirectory fp
 
-colonCommand :: NavimState -> EventM n (Next NavimState)
-colonCommand s =
-    case reverse $ commandRev s of
+colonCommand :: NavimState -> String -> EventM n (Next NavimState)
+colonCommand s input =
+    case input of
         ":q" -> halt s
         ':':'d':'i':'r':' ':dirName -> do
-            success <- liftIO $ createDirectorySafe dirName
+            success <- liftIO . createDirectorySafe $ dirName
             -- TODO: handle failure
-            s'      <- liftIO $ buildState $ Just s
-            continue s' {commandRev = []}
-        _ -> continue s {commandRev = []}
+            s'      <- liftIO . buildState $ Just s
+            continue s' { mode = Navigation }
+        _ -> continue s { mode = Navigation }
 
 {- END Event Handler Helpers -}
-
--- Event Handler
-handleEvent :: NavimState -> BrickEvent n e -> EventM n (Next NavimState)
-handleEvent s e =
-    case e of
-        VtyEvent vtye ->
-            case vtye of
-                EvKey (KChar ':') [] -> continue s {commandRev = ':':commandRev s}
-
-                EvKey key@(KChar 'j') [] ->
-                    colonModeOr (moveCursorWith nonEmptyCursorSelectNext s) key
-                EvKey key@(KChar 'k') [] ->
-                    colonModeOr (moveCursorWith nonEmptyCursorSelectPrev s) key
-                EvKey key@(KChar _)   [] ->
-                    colonModeOr (continue s) key
-
-                EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
-                EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
-
-                EvKey KBS    [] -> colonModeOr (continue s) KBS
-                EvKey KEnter [] -> colonModeOr (performNavigate s) KEnter
-                EvKey KEsc   [] -> continue s {commandRev = []}
-                _ -> continue s
-        _ -> continue s
-  where
-    colonModeOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
-    colonModeOr elseAction key =
-        case (commandRev s, key) of
-            ([], _)       -> elseAction
-            (c:cs, KBS)   -> continue s {commandRev = cs}
-            (cs, KEnter)  -> colonCommand s
-            (cs, KChar c) -> do s' <- liftIO $ buildState $ Just s
-                                continue s' {commandRev = c:cs}
-            (_, _)        -> continue s
