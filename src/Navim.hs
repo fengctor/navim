@@ -35,8 +35,6 @@ navim = do
     let navPath = join $ intersperse "/" $ reverse $ navHistory endState
     putStrLn navPath
 
--- TODO: - add "Mode" sum type and record
---       - draw dialog and handle input based on current Mode
 data NavimState = NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
     , navHistory :: [FilePath]
@@ -48,9 +46,14 @@ data Mode
     | Colon      -- colon commands: ends when input is empty or enter pressed
         { colonInputReversed :: String }
     | Input      -- waiting for user input with a given prompt
-        { prompt :: String        -- TODO: maybe sum type for prompt?
-        , responseInput :: String -- TODO: different data structure for fast snoc?
+        { prompt :: Prompt        -- TODO: maybe sum type for prompt?
+        , responseReversed :: String -- TODO: different data structure for fast snoc?
         }
+    deriving (Show, Eq)
+
+data Prompt
+    = Create
+    | Remove
     deriving (Show, Eq)
 
 data ResourceName
@@ -126,21 +129,13 @@ drawNavim ns =
       <=>
       padBottom Max pathsWidget
       <=>
-      (padRight Max $
-          case mode ns of
-              Navigation ->
-                  str "-- NAVIGATION --"
-              Colon reversedInput ->
-                  showCursor
-                      ResourceName
-                      (Location (textWidth reversedInput, 0)) -- end of colon command string
-                      (str . reverse $ reversedInput)
-              Input prompt input ->
-                  str "TODOTODOTODO"
-      )
+      promptBar
+      <=>
+      inputBar
     ]
   where
     pathsCursor = navimStatePaths ns
+
     pathsWidget =
         padRight Max
         . viewport ResourceName Vertical
@@ -154,9 +149,34 @@ drawNavim ns =
           , drawFilePath False <$> nonEmptyCursorNext pathsCursor
           ]
 
+    promptBar =
+        str $ case mode ns of
+            Input Create _ ->
+                "Enter the name of the file to create"
+            Input Remove _ ->
+                "Are you sure you want to remove " ++ getPath (nonEmptyCursorCurrent pathsCursor)
+            _ -> ""
+
+    inputBar =
+        padRight Max $
+            case mode ns of
+                Navigation ->
+                    str "-- NAVIGATION --"
+                Colon reversedInput ->
+                    withBottomCursor reversedInput
+                Input Create reversedInput ->
+                    withBottomCursor $ reversedInput ++ reverse "File name: "
+                Input Remove reversedInput ->
+                    withBottomCursor $ reversedInput ++ reverse "zoink: "
+
+    withBottomCursor reversedInput =
+        showCursor
+            ResourceName
+            (Location (textWidth reversedInput, 0))
+            (str . reverse $ reversedInput)
+
 drawFilePath :: Bool -> DirContent -> Widget n
 drawFilePath selected dc = decorate . str . getPath $ dc
--- TODO: how to mix attributes
   where
     decorate =
         withAttr
@@ -172,27 +192,30 @@ handleEvent s e =
         VtyEvent vtye ->
             case vtye of
                 EvKey key@(KChar ':') [] ->
-                    colonModeOr (continue s { mode = Colon ":" }) key
+                    bottomInputOr (continue s { mode = Colon ":" }) key
                 EvKey key@(KChar 'j') [] ->
-                    colonModeOr (moveCursorWith nonEmptyCursorSelectNext s) key
+                    bottomInputOr (moveCursorWith nonEmptyCursorSelectNext s) key
                 EvKey key@(KChar 'k') [] ->
-                    colonModeOr (moveCursorWith nonEmptyCursorSelectPrev s) key
+                    bottomInputOr (moveCursorWith nonEmptyCursorSelectPrev s) key
+                EvKey key@(KChar 'n') [] ->
+                    bottomInputOr (continue s { mode = Input Create "" }) key
                 EvKey key@(KChar _)   [] ->
-                    colonModeOr (continue s) key
-
+                    bottomInputOr (continue s) key
+                -- for new directory EvKey key@(KChar 'n') [MMeta] ->
+                    --continue s { mode = Colon "META BOIS" }
                 EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
                 EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
 
-                EvKey KBS    [] -> colonModeOr (continue s) KBS
-                EvKey KEnter [] -> colonModeOr (performNavigate s) KEnter
+                EvKey KBS    [] -> bottomInputOr (continue s) KBS
+                EvKey KEnter [] -> bottomInputOr (performNavigate s) KEnter
                 EvKey KEsc   [] -> continue s { mode = Navigation }
                 _ -> continue s
         _ -> continue s
   where
-    colonModeOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
-    colonModeOr elseAction key =
+    bottomInputOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
+    bottomInputOr navAction key =
         case (mode s, key) of
-            (Navigation, _) -> elseAction
+            (Navigation, _) -> navAction
 
             -- TODO: lens please...
             (Colon input, KChar c) ->
@@ -200,9 +223,18 @@ handleEvent s e =
             (Colon [c], KBS) ->
                 continue s { mode = Navigation }
             (Colon (c:cs), KBS) ->
-                continue s { mode = Colon { colonInputReversed = cs } } -- Yikes unsafe...
-            (Colon cs, KEnter) -> colonCommand s . reverse $ cs
+                continue s { mode = Colon { colonInputReversed = cs } }
+            (Colon cs, KEnter) ->
+                colonCommand s . reverse $ cs
 
+            (inMode@(Input Create resp), KChar c) ->
+                continue s { mode =  inMode { responseReversed = c:resp } }
+            (inMode@(Input Create (c:cs)), KBS) ->
+                continue s { mode =  inMode { responseReversed = cs } }
+            (inMode@(Input Create ""), KBS) ->
+                continue s { mode =  inMode { responseReversed = "" } }
+            (Input Create inp, KEnter) ->
+                inputCommand s Create . reverse $ inp
             (Input _ _, _) -> continue s -- TODO!!!!!!!!
 
             (_, _)        -> continue s
@@ -251,7 +283,14 @@ colonCommand s input =
             success <- liftIO . createDirectorySafe $ dirName
             -- TODO: handle failure
             s'      <- liftIO . buildState $ Just s
-            continue s' { mode = Navigation }
+            continue s { mode = Navigation }
         _ -> continue s { mode = Navigation }
+
+inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
+inputCommand s Create fileName = do
+    liftIO . writeFile fileName $ ""  -- TODO: use a safe variant (pls handle empty too)
+    s' <- liftIO . buildState $ Just s
+    continue s' { mode = Navigation }
+inputCommand s Remove fileName = error "didn't implement yet boiii"
 
 {- END Event Handler Helpers -}
