@@ -40,16 +40,17 @@ navim = do
 data NavimState = NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
     , navHistory :: [FilePath]
-    --, commandRev :: String -- TODO: bye
     , mode :: Mode
     } deriving (Show, Eq)
 
 data Mode
-    = Navigation                       -- normal file navigation
-    | Colon { colonInputReversed :: String }   -- colon commands: ends when input is empty or enter pressed
-    | Input { prompt :: String         -- TODO: maybe sum type for prompt?
-            , responseInput :: String  -- TODO: better data structure for fast snoc?
-            }                          -- waiting for user input with a given prompt
+    = Navigation -- normal file navigation
+    | Colon      -- colon commands: ends when input is empty or enter pressed
+        { colonInputReversed :: String }
+    | Input      -- waiting for user input with a given prompt
+        { prompt :: String        -- TODO: maybe sum type for prompt?
+        , responseInput :: String -- TODO: different data structure for fast snoc?
+        }
     deriving (Show, Eq)
 
 data ResourceName
@@ -70,21 +71,21 @@ nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
 
 -- TUI App Components
 navimApp :: App NavimState e ResourceName
-navimApp =
-  App { appDraw = drawNavim
-      , appChooseCursor = showFirstCursor
-      , appHandleEvent = handleEvent
-      , appStartEvent = pure
-      , appAttrMap = const $
-            attrMap
-                mempty
-                [ ("file", fg white)
-                , ("dir", fg brightCyan)
-                , ("file" <> "selected", withStyle currentAttr underline)
-                , ("dir" <> "selected", withStyle (bg green) underline)
-                , ("header", fg white)
-                ]
-      }
+navimApp = App
+    { appDraw = drawNavim
+    , appChooseCursor = showFirstCursor
+    , appHandleEvent = handleEvent
+    , appStartEvent = pure
+    , appAttrMap = const $
+          attrMap
+              mempty
+              [ ("file", fg white)
+              , ("dir", fg brightCyan)
+              , ("file" <> "selected", withStyle currentAttr underline)
+              , ("dir" <> "selected", withStyle (bg green) underline)
+              , ("header", fg white)
+              ]
+    }
 
 -- State Transformer
 buildState :: Maybe NavimState -> IO NavimState
@@ -99,15 +100,16 @@ buildState prevState = do
             return $
                 case prevState of
                     Nothing -> NavimState
-                                   { navimStatePaths = makeNonEmptyCursor ne
-                                   , navHistory = []
-                                   --, commandRev = ""
-                                   , mode = Navigation
-                                   }
-                    Just ps -> ps { navimStatePaths =
-                                        adjustCursor
-                                            (navimStatePaths ps)
-                                            (makeNonEmptyCursor ne) }
+                        { navimStatePaths = makeNonEmptyCursor ne
+                        , navHistory = []
+                        , mode = Navigation
+                        }
+                    Just ps -> ps
+                        { navimStatePaths =
+                              adjustCursor
+                                  (navimStatePaths ps)
+                                  (makeNonEmptyCursor ne)
+                        }
   where
     adjustCursor oldNec = moveNextBy (length $ nonEmptyCursorPrev oldNec)
     moveNextBy 0 newNec = newNec
@@ -136,12 +138,6 @@ drawNavim ns =
               Input prompt input ->
                   str "TODOTODOTODO"
       )
-          {-if null (commandRev ns)
-              then str "-- NAVIGATION --"
-              else showCursor
-                       ResourceName
-                       (Location (textWidth $ commandRev ns, 0)) -- end of colon command string
-                       (str . reverse $ commandRev ns))-}
     ]
   where
     pathsCursor = navimStatePaths ns
@@ -175,8 +171,8 @@ handleEvent s e =
     case e of
         VtyEvent vtye ->
             case vtye of
-                EvKey key@(KChar ':') [] -> colonModeOr (continue s { mode = Colon ":" }) key
-
+                EvKey key@(KChar ':') [] ->
+                    colonModeOr (continue s { mode = Colon ":" }) key
                 EvKey key@(KChar 'j') [] ->
                     colonModeOr (moveCursorWith nonEmptyCursorSelectNext s) key
                 EvKey key@(KChar 'k') [] ->
@@ -201,8 +197,6 @@ handleEvent s e =
             -- TODO: lens please...
             (Colon input, KChar c) ->
                 continue s { mode = Colon { colonInputReversed = c:input } }
-            {- (cs, KChar c) -> do s' <- liftIO $ buildState $ Just s
-                                continue s' {commandRev = c:cs} -}
             (Colon [c], KBS) ->
                 continue s { mode = Navigation }
             (Colon (c:cs), KBS) ->
