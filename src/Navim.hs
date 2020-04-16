@@ -52,7 +52,8 @@ data Mode
     deriving (Show, Eq)
 
 data Prompt
-    = Create
+    = CreateFile
+    | CreateDirectory
     | Remove
     deriving (Show, Eq)
 
@@ -151,8 +152,10 @@ drawNavim ns =
 
     promptBar =
         str $ case mode ns of
-            Input Create _ ->
-                "Enter the name of the file to create"
+            Input CreateFile _ ->
+                "Enter the name of the file to be created"
+            Input CreateDirectory _ ->
+                "Enter the name of the directory to be created"
             Input Remove _ ->
                 "Are you sure you want to remove " ++ getPath (nonEmptyCursorCurrent pathsCursor)
             _ -> ""
@@ -164,8 +167,10 @@ drawNavim ns =
                     str "-- NAVIGATION --"
                 Colon reversedInput ->
                     withBottomCursor reversedInput
-                Input Create reversedInput ->
+                Input CreateFile reversedInput ->
                     withBottomCursor $ reversedInput ++ reverse "File name: "
+                Input CreateDirectory reversedInput ->
+                    withBottomCursor $ reversedInput ++ reverse "Directory name: "
                 Input Remove reversedInput ->
                     withBottomCursor $ reversedInput ++ reverse "zoink: "
 
@@ -198,7 +203,9 @@ handleEvent s e =
                 EvKey key@(KChar 'k') [] ->
                     bottomInputOr (moveCursorWith nonEmptyCursorSelectPrev s) key
                 EvKey key@(KChar 'n') [] ->
-                    bottomInputOr (continue s { mode = Input Create "" }) key
+                    bottomInputOr (continue s { mode = Input CreateFile "" }) key
+                EvKey key@(KChar 'n') [MMeta] ->
+                    bottomInputOr (continue s { mode = Input CreateDirectory "" }) key
                 EvKey key@(KChar _)   [] ->
                     bottomInputOr (continue s) key
                 -- for new directory EvKey key@(KChar 'n') [MMeta] ->
@@ -227,14 +234,16 @@ handleEvent s e =
             (Colon cs, KEnter) ->
                 colonCommand s . reverse $ cs
 
-            (inMode@(Input Create resp), KChar c) ->
+            (inMode@(Input _ resp), KChar c) ->
                 continue s { mode =  inMode { responseReversed = c:resp } }
-            (inMode@(Input Create (c:cs)), KBS) ->
+            (inMode@(Input _ (c:cs)), KBS) ->
                 continue s { mode =  inMode { responseReversed = cs } }
-            (inMode@(Input Create ""), KBS) ->
+            (inMode@(Input _ ""), KBS) ->
                 continue s { mode =  inMode { responseReversed = "" } }
-            (Input Create inp, KEnter) ->
-                inputCommand s Create . reverse $ inp
+
+            (Input pr inp, KEnter) ->
+                inputCommand s pr . reverse $ inp
+
             (Input _ _, _) -> continue s -- TODO!!!!!!!!
 
             (_, _)        -> continue s
@@ -287,8 +296,12 @@ colonCommand s input =
         _ -> continue s { mode = Navigation }
 
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
-inputCommand s Create fileName = do
+inputCommand s CreateFile fileName = do
     liftIO . writeFile fileName $ ""  -- TODO: use a safe variant (pls handle empty too)
+    s' <- liftIO . buildState $ Just s
+    continue s' { mode = Navigation }
+inputCommand s CreateDirectory fileName = do
+    success <- liftIO . createDirectorySafe $ fileName
     s' <- liftIO . buildState $ Just s
     continue s' { mode = Navigation }
 inputCommand s Remove fileName = error "didn't implement yet boiii"
