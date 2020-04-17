@@ -39,7 +39,7 @@ navim = do
 
 data NavimState = NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
-    , navHistory :: [String]
+    , navHistory :: [FilePath]
     , mode :: Mode
     } deriving (Show, Eq)
 
@@ -113,11 +113,6 @@ buildState prevState = do
     moveNextBy n newNec = case nonEmptyCursorSelectNext newNec of
                                Nothing   -> newNec
                                Just nec' -> moveNextBy (n - 1) nec'
-    splitOn _ [] = []
-    splitOn c (s:ss)
-      | c == s = splitOn c ss
-      | otherwise = let (left, right) = break (== '/') (s:ss)
-                        in left : splitOn c right
 
 -- UI Drawer
 drawNavim :: NavimState -> [Widget ResourceName]
@@ -333,8 +328,6 @@ colonCommand s input =
         _ -> continue s { mode = Navigation }
 
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
-inputCommand ns CreateFile "" =
-    continue ns { mode = Navigation }
 inputCommand ns CreateFile name = do
     success <- liftIO . createDirContentSafe $ File name
     ns'     <- liftIO . buildState $ Just ns
@@ -348,8 +341,6 @@ inputCommand ns Remove "y" = do
     ns' <- liftIO . buildState $ Just ns
     continue ns' { mode = Navigation }
 inputCommand ns Remove _ =
-    continue ns { mode = Navigation }
-inputCommand ns Rename "" =
     continue ns { mode = Navigation }
 inputCommand ns Rename newPath = do
     success <- liftIO $ renameDirContentSafe
