@@ -101,25 +101,32 @@ buildState prevState = do
     case NE.nonEmpty contents of
         Nothing -> die "Should never happen (current directory \".\" always here)"
         Just ne ->
-            return $
-                case prevState of
-                    Nothing -> NavimState
+            --return $
+            case prevState of
+                Nothing -> do
+                    curDir <- liftIO getCurrentDirectory
+                    return NavimState
                         { navimStatePaths = makeNonEmptyCursor ne
-                        , navHistory = []
+                        , navHistory = reverse . splitOn '/' $ curDir
                         , mode = Navigation
                         }
-                    Just ps -> ps
-                        { navimStatePaths =
-                              adjustCursor
-                                  (navimStatePaths ps)
-                                  (makeNonEmptyCursor ne)
-                        }
+                Just ps -> return ps
+                    { navimStatePaths =
+                          adjustCursor
+                              (navimStatePaths ps)
+                              (makeNonEmptyCursor ne)
+                    }
   where
     adjustCursor oldNec = moveNextBy (length $ nonEmptyCursorPrev oldNec)
     moveNextBy 0 newNec = newNec
     moveNextBy n newNec = case nonEmptyCursorSelectNext newNec of
                                Nothing   -> newNec
                                Just nec' -> moveNextBy (n - 1) nec'
+    splitOn _ [] = []
+    splitOn c (s:ss)
+      | c == s = splitOn c ss
+      | otherwise = let (left, right) = break (== '/') (s:ss)
+                        in left : splitOn c right
 
 -- UI Drawer
 drawNavim :: NavimState -> [Widget ResourceName]
@@ -130,7 +137,7 @@ drawNavim ns =
       <=>
       padBottom Max pathsWidget
       <=>
-      promptBar
+      statusBar
       <=>
       inputBar
     ]
@@ -150,7 +157,7 @@ drawNavim ns =
           , drawFilePath False <$> nonEmptyCursorNext pathsCursor
           ]
 
-    promptBar =
+    statusBar =
         str $ case mode ns of
             Input CreateFile _ ->
                 "Enter the name of the file to be created"
@@ -174,7 +181,7 @@ drawNavim ns =
                             , name
                             , "?"
                             ]
-            _ -> ""
+            _ -> ('/':) . mconcat . intersperse "/" . reverse . navHistory $ ns
 
     inputBar =
         padRight Max $
@@ -281,6 +288,7 @@ moveCursorWith move state =
             Nothing     -> state
             Just newNec -> state {navimStatePaths = newNec}
 
+-- TODO: move cursor to parent directory when navigating on ".."
 performNavigate :: NavimState -> EventM n (Next NavimState)
 performNavigate s = case nonEmptyCursorCurrent . navimStatePaths $ s of
                         File      _  -> continue s
@@ -288,8 +296,7 @@ performNavigate s = case nonEmptyCursorCurrent . navimStatePaths $ s of
                             liftIO $ setCurrentDirectory fp
                             let newHistory = case (navHistory s, fp) of
                                                  (ps  , "." )    -> ps
-                                                 ([]  , "..")    -> [".."]
-                                                 ("..":ps, "..") -> "..":"..":ps
+                                                 ([]  , "..")    -> []
                                                  (p:ps, "..")    -> ps
                                                  (ps  , next)    -> next:ps
                             s' <- liftIO . buildState $
