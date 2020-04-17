@@ -91,7 +91,7 @@ navimApp = App
               ]
     }
 
--- State Transformer
+-- State Transformer (and I don't mean the monad ;))
 buildState :: Maybe NavimState -> IO NavimState
 buildState prevState = do
     curdir      <- getCurrentDirectory
@@ -157,7 +157,23 @@ drawNavim ns =
             Input CreateDirectory _ ->
                 "Enter the name of the directory to be created"
             Input Remove _ ->
-                "Are you sure you want to remove " ++ getPath (nonEmptyCursorCurrent pathsCursor)
+                case nonEmptyCursorCurrent pathsCursor of
+                    File name ->
+                        mconcat
+                            [ "Are you sure you want to remove the file "
+                            , name
+                            , "?"
+                            ]
+                    Directory "." ->
+                        "You may not remove the current directory from within."
+                    Directory ".." ->
+                        "You may not remove the parent directory from within."
+                    Directory name ->
+                        mconcat
+                            [ "Are you sure you want to remove the directory "
+                            , name
+                            , "?"
+                            ]
             _ -> ""
 
     inputBar =
@@ -172,7 +188,7 @@ drawNavim ns =
                 Input CreateDirectory reversedInput ->
                     withBottomCursor $ reversedInput ++ reverse "Directory name: "
                 Input Remove reversedInput ->
-                    withBottomCursor $ reversedInput ++ reverse "zoink: "
+                    withBottomCursor $ reversedInput ++ reverse "Confirm (y/n): "
 
     withBottomCursor reversedInput =
         showCursor
@@ -206,10 +222,11 @@ handleEvent s e =
                     bottomInputOr (continue s { mode = Input CreateFile "" }) key
                 EvKey key@(KChar 'n') [MMeta] ->
                     bottomInputOr (continue s { mode = Input CreateDirectory "" }) key
+                EvKey key@(KChar 'd') [] ->
+                    bottomInputOr (continue s { mode = Input Remove "" }) key
                 EvKey key@(KChar _)   [] ->
                     bottomInputOr (continue s) key
-                -- for new directory EvKey key@(KChar 'n') [MMeta] ->
-                    --continue s { mode = Colon "META BOIS" }
+
                 EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
                 EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
 
@@ -241,6 +258,11 @@ handleEvent s e =
             (inMode@(Input _ ""), KBS) ->
                 continue s { mode =  inMode { responseReversed = "" } }
 
+            (Input Remove inp, KEnter) ->
+                case nonEmptyCursorCurrent . navimStatePaths $ s of
+                    Directory "."  -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                    Directory ".." -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                    _              -> inputCommand s Remove . reverse $ inp
             (Input pr inp, KEnter) ->
                 inputCommand s pr . reverse $ inp
 
@@ -260,7 +282,7 @@ moveCursorWith move state =
             Just newNec -> state {navimStatePaths = newNec}
 
 performNavigate :: NavimState -> EventM n (Next NavimState)
-performNavigate s = case nonEmptyCursorCurrent $ navimStatePaths s of
+performNavigate s = case nonEmptyCursorCurrent . navimStatePaths $ s of
                         File      _  -> continue s
                         Directory fp -> do
                             liftIO $ setCurrentDirectory fp
@@ -272,7 +294,8 @@ performNavigate s = case nonEmptyCursorCurrent $ navimStatePaths s of
                                                  (ps  , next)    -> next:ps
                             s' <- liftIO . buildState $
                                       Just s { navimStatePaths =
-                                                   nonEmptyCursorReset (navimStatePaths s) }
+                                                   nonEmptyCursorReset (navimStatePaths s)
+                                             }
                             continue s' { navHistory = newHistory }
 
 -- TODO: move this to a safe directory ops module?
@@ -284,26 +307,30 @@ createDirectorySafe fp = do
         then return False
         else True <$ createDirectory fp
 
+removeDirContent :: DirContent -> IO ()
+removeDirContent (File name)      = removeFile name
+removeDirContent (Directory name) = removeDirectoryRecursive name
+
 colonCommand :: NavimState -> String -> EventM n (Next NavimState)
 colonCommand s input =
     case input of
         ":q" -> halt s
-        ':':'d':'i':'r':' ':dirName -> do
-            success <- liftIO . createDirectorySafe $ dirName
-            -- TODO: handle failure
-            s'      <- liftIO . buildState $ Just s
-            continue s { mode = Navigation }
+        -- TODO: other meta commands
         _ -> continue s { mode = Navigation }
 
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
-inputCommand s CreateFile fileName = do
-    liftIO . writeFile fileName $ ""  -- TODO: use a safe variant (pls handle empty too)
+inputCommand s CreateFile name = do
+    liftIO . writeFile name $ ""  -- TODO: use a safe variant (pls handle empty too)
     s' <- liftIO . buildState $ Just s
     continue s' { mode = Navigation }
-inputCommand s CreateDirectory fileName = do
-    success <- liftIO . createDirectorySafe $ fileName
+inputCommand s CreateDirectory name = do
+    success <- liftIO . createDirectorySafe $ name
     s' <- liftIO . buildState $ Just s
     continue s' { mode = Navigation }
-inputCommand s Remove fileName = error "didn't implement yet boiii"
+inputCommand s Remove "y" = do
+    liftIO . removeDirContent . nonEmptyCursorCurrent . navimStatePaths $ s
+    s' <- liftIO . buildState $ Just s
+    continue s' { mode = Navigation }
+inputCommand s Remove _ = continue s { mode = Navigation }
 
 {- END Event Handler Helpers -}
