@@ -27,6 +27,8 @@ import Cursor.Simple.List.NonEmpty
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
 
+import Navim.DirContent
+
 -- Main
 navim :: IO ()
 navim = do
@@ -37,7 +39,7 @@ navim = do
 
 data NavimState = NavimState
     { navimStatePaths :: NonEmptyCursor DirContent
-    , navHistory :: [FilePath]
+    , navHistory :: [String]
     , mode :: Mode
     } deriving (Show, Eq)
 
@@ -55,20 +57,13 @@ data Prompt
     = CreateFile
     | CreateDirectory
     | Remove
+    | Rename
     deriving (Show, Eq)
 
 data ResourceName
     = ResourceName
     deriving (Show, Eq, Ord)
 
-data DirContent
-    = File FilePath
-    | Directory FilePath
-    deriving (Show, Eq, Ord)
-
-getPath :: DirContent -> FilePath
-getPath (File fp)      = fp
-getPath (Directory fp) = fp
 
 nonEmptyCursorReset :: NonEmptyCursor a -> NonEmptyCursor a
 nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
@@ -94,17 +89,13 @@ navimApp = App
 -- State Transformer (and I don't mean the monad ;))
 buildState :: Maybe NavimState -> IO NavimState
 buildState prevState = do
-    curdir      <- getCurrentDirectory
-    rawContents <- getDirectoryContents curdir
-    contents    <- for rawContents $ \fp ->
-                       bool (Directory fp) (File fp) <$> doesFileExist fp
+    contents <- getCurrentDirContents
     case NE.nonEmpty contents of
         Nothing -> die "Should never happen (current directory \".\" always here)"
         Just ne ->
-            --return $
             case prevState of
                 Nothing -> do
-                    curDir <- liftIO getCurrentDirectory
+                    curDir <- getCurrentDirectory
                     return NavimState
                         { navimStatePaths = makeNonEmptyCursor ne
                         , navHistory = reverse . splitOn '/' $ curDir
@@ -149,12 +140,12 @@ drawNavim ns =
         . viewport ResourceName Vertical
         . vBox
         . mconcat
-        $ [ drawFilePath False <$> reverse (nonEmptyCursorPrev pathsCursor)
+        $ [ drawDirContent False <$> reverse (nonEmptyCursorPrev pathsCursor)
           , [ visible
-              . drawFilePath True
+              . drawDirContent True
               $ nonEmptyCursorCurrent pathsCursor
             ]
-          , drawFilePath False <$> nonEmptyCursorNext pathsCursor
+          , drawDirContent False <$> nonEmptyCursorNext pathsCursor
           ]
 
     statusBar =
@@ -181,6 +172,25 @@ drawNavim ns =
                             , name
                             , "?"
                             ]
+            Input Rename _ ->
+                case nonEmptyCursorCurrent pathsCursor of
+                    File name ->
+                        mconcat
+                            [ "Enter the new name for the file "
+                            , name
+                            , "."
+                            ]
+                    Directory "." ->
+                        "You may not rename the current directory from within."
+                    Directory ".." ->
+                        "You may not rename the parent directory from within."
+                    Directory name ->
+                        mconcat
+                            [ "Enter the new name for the directory "
+                            , name
+                            , "."
+                            ]
+
             _ -> ('/':) . mconcat . intersperse "/" . reverse . navHistory $ ns
 
     inputBar =
@@ -196,6 +206,8 @@ drawNavim ns =
                     withBottomCursor $ reversedInput ++ reverse "Directory name: "
                 Input Remove reversedInput ->
                     withBottomCursor $ reversedInput ++ reverse "Confirm (y/n): "
+                Input Rename reversedInput ->
+                    withBottomCursor $ reversedInput ++ reverse "New name: "
 
     withBottomCursor reversedInput =
         showCursor
@@ -203,8 +215,8 @@ drawNavim ns =
             (Location (textWidth reversedInput, 0))
             (str . reverse $ reversedInput)
 
-drawFilePath :: Bool -> DirContent -> Widget n
-drawFilePath selected dc = decorate . str . getPath $ dc
+drawDirContent :: Bool -> DirContent -> Widget n
+drawDirContent selected dc = decorate . str . getPath $ dc
   where
     decorate =
         withAttr
@@ -231,6 +243,8 @@ handleEvent s e =
                     bottomInputOr (continue s { mode = Input CreateDirectory "" }) key
                 EvKey key@(KChar 'd') [] ->
                     bottomInputOr (continue s { mode = Input Remove "" }) key
+                EvKey key@(KChar 'r') [] ->
+                    bottomInputOr (continue s { mode = Input Rename "" }) key
                 EvKey key@(KChar _)   [] ->
                     bottomInputOr (continue s) key
 
@@ -270,6 +284,12 @@ handleEvent s e =
                     Directory "."  -> continue s { mode = Navigation } -- TODO: no silent failure pls
                     Directory ".." -> continue s { mode = Navigation } -- TODO: no silent failure pls
                     _              -> inputCommand s Remove . reverse $ inp
+            (Input Rename inp, KEnter) ->
+                case nonEmptyCursorCurrent . navimStatePaths $ s of
+                    Directory "."  -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                    Directory ".." -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                    _              -> inputCommand s Rename . reverse $ inp
+
             (Input pr inp, KEnter) ->
                 inputCommand s pr . reverse $ inp
 
@@ -305,19 +325,6 @@ performNavigate s = case nonEmptyCursorCurrent . navimStatePaths $ s of
                                              }
                             continue s' { navHistory = newHistory }
 
--- TODO: move this to a safe directory ops module?
-createDirectorySafe :: FilePath -> IO Bool
-createDirectorySafe fp = do
-    curdir      <- getCurrentDirectory
-    contents    <- getDirectoryContents curdir
-    if fp `elem` contents
-        then return False
-        else True <$ createDirectory fp
-
-removeDirContent :: DirContent -> IO ()
-removeDirContent (File name)      = removeFile name
-removeDirContent (Directory name) = removeDirectoryRecursive name
-
 colonCommand :: NavimState -> String -> EventM n (Next NavimState)
 colonCommand s input =
     case input of
@@ -326,18 +333,29 @@ colonCommand s input =
         _ -> continue s { mode = Navigation }
 
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
-inputCommand s CreateFile name = do
-    liftIO . writeFile name $ ""  -- TODO: use a safe variant (pls handle empty too)
-    s' <- liftIO . buildState $ Just s
-    continue s' { mode = Navigation }
-inputCommand s CreateDirectory name = do
-    success <- liftIO . createDirectorySafe $ name
-    s' <- liftIO . buildState $ Just s
-    continue s' { mode = Navigation }
-inputCommand s Remove "y" = do
-    liftIO . removeDirContent . nonEmptyCursorCurrent . navimStatePaths $ s
-    s' <- liftIO . buildState $ Just s
-    continue s' { mode = Navigation }
-inputCommand s Remove _ = continue s { mode = Navigation }
+inputCommand ns CreateFile "" =
+    continue ns { mode = Navigation }
+inputCommand ns CreateFile name = do
+    success <- liftIO . createDirContentSafe $ File name
+    ns'     <- liftIO . buildState $ Just ns
+    continue ns' { mode = Navigation } -- TODO: Navigation mode includes a Maybe Error field
+inputCommand ns CreateDirectory name = do
+    success <- liftIO . createDirContentSafe $ Directory name
+    ns'     <- liftIO . buildState $ Just ns
+    continue ns' { mode = Navigation } -- TODO: Navigation mode includes a Maybe Error field
+inputCommand ns Remove "y" = do
+    liftIO . removeDirContent . nonEmptyCursorCurrent . navimStatePaths $ ns
+    ns' <- liftIO . buildState $ Just ns
+    continue ns' { mode = Navigation }
+inputCommand ns Remove _ =
+    continue ns { mode = Navigation }
+inputCommand ns Rename "" =
+    continue ns { mode = Navigation }
+inputCommand ns Rename newPath = do
+    success <- liftIO $ renameDirContentSafe
+                   (nonEmptyCursorCurrent . navimStatePaths $ ns)
+                   newPath
+    ns'     <- liftIO . buildState $ Just ns
+    continue ns' { mode = Navigation }
 
 {- END Event Handler Helpers -}
