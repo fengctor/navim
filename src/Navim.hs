@@ -9,6 +9,7 @@ import Data.Bool
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe
 import Data.Traversable
 
 import Control.Monad
@@ -232,6 +233,10 @@ handleEvent s e =
                     bottomInputOr (moveCursorWith nonEmptyCursorSelectNext s) key
                 EvKey key@(KChar 'k') [] ->
                     bottomInputOr (moveCursorWith nonEmptyCursorSelectPrev s) key
+                EvKey key@(KChar 'g') [] ->
+                    bottomInputOr (moveCursorWith (Just . nonEmptyCursorSelectFirst) s) key
+                EvKey key@(KChar 'G') [] ->
+                    bottomInputOr (moveCursorWith (Just . nonEmptyCursorSelectLast) s) key
                 EvKey key@(KChar 'n') [] ->
                     bottomInputOr (continue s { mode = Input CreateFile "" }) key
                 EvKey key@(KChar 'n') [MMeta] ->
@@ -305,20 +310,29 @@ moveCursorWith move state =
 
 -- TODO: move cursor to parent directory when navigating on ".."
 performNavigate :: NavimState -> EventM n (Next NavimState)
-performNavigate s = case nonEmptyCursorCurrent . navimStatePaths $ s of
-                        File      _  -> continue s
-                        Directory fp -> do
-                            liftIO $ setCurrentDirectory fp
-                            let newHistory = case (navHistory s, fp) of
-                                                 (ps  , "." )    -> ps
-                                                 ([]  , "..")    -> []
-                                                 (p:ps, "..")    -> ps
-                                                 (ps  , next)    -> next:ps
-                            s' <- liftIO . buildState $
-                                      Just s { navimStatePaths =
-                                                   nonEmptyCursorReset (navimStatePaths s)
-                                             }
-                            continue s' { navHistory = newHistory }
+performNavigate ns =
+    case nonEmptyCursorCurrent nsPaths of
+        File      _  -> continue ns
+        Directory fp -> do
+            liftIO $ setCurrentDirectory fp
+            let (newHistory,
+                 nextFocus) = case (navHistory ns, fp) of
+                                  (ps, ".")    -> (ps, ".")
+                                  ([], "..")   -> ([], ".")
+                                  (p:ps, "..") -> (ps, p)
+                                  (ps, next)   -> (next:ps, ".")
+            ns' <- liftIO . buildState $
+                       Just ns { navimStatePaths = nonEmptyCursorReset nsPaths }
+            continue ns' { navHistory = newHistory
+                         , navimStatePaths =
+                               let newPaths = navimStatePaths ns'
+                                   in fromMaybe (nonEmptyCursorReset newPaths) $
+                                          nonEmptyCursorSearch
+                                          ((== nextFocus) . getPath)
+                                          newPaths
+                         }
+  where
+    nsPaths = navimStatePaths ns
 
 colonCommand :: NavimState -> String -> EventM n (Next NavimState)
 colonCommand s input =
