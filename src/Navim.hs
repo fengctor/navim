@@ -29,6 +29,8 @@ import Cursor.Simple.List.NonEmpty
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
 
+import Text.Wrap
+
 import Data.NavimState
 import Navim.DirContent
 
@@ -47,6 +49,9 @@ data ResourceName
 
 nonEmptyCursorReset :: NonEmptyCursor a -> NonEmptyCursor a
 nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
+
+strWrapDefault :: String -> Widget n
+strWrapDefault = strWrapWith (WrapSettings False True)
 
 -- TUI App Components
 navimApp :: App NavimState e ResourceName
@@ -95,8 +100,7 @@ buildState prevState = do
 drawNavim :: NavimState -> [Widget ResourceName]
 drawNavim ns =
     [
-      border (padRight Max $
-         withAttr "header" (str "navim - a (WIP) file manager written in Haskell by Gary Feng"))
+      header
       <=>
       padBottom Max pathsWidget
       <=>
@@ -105,6 +109,13 @@ drawNavim ns =
       inputBar
     ]
   where
+    header =
+        border
+        . padRight Max
+        . withAttr "header"
+        . strWrapDefault
+        $ "navim - a (WIP) file manager written in Haskell by Gary Feng"
+
     pathsWidget =
         padRight Max
         . viewport PathsWidget Vertical
@@ -191,11 +202,15 @@ drawNavim ns =
     withBottomCursor reversedInput =
         showCursor
             InputBar
-            (Location (textWidth reversedInput, 0))
-            (str . reverse $ reversedInput)
+            (Location (textWidth reversedInput, 0)) -- TODO: save screen width in NavimState and mod this by it
+            (strWrapDefault . reverse $ reversedInput)
+
 
 drawDirContent :: Bool -> DirContent -> Widget n
-drawDirContent selected dc = decorate . str . getPath $ dc
+drawDirContent selected dc =
+    decorate
+    . strWrapDefault
+    . getPath $ dc
   where
     decorate =
         withAttr
