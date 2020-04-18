@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
---{-# LANGUAGE TemplateHaskell #-}
 
 module Navim where
 
@@ -30,8 +29,8 @@ import Cursor.Simple.List.NonEmpty
 import Graphics.Vty.Attributes
 import Graphics.Vty.Input.Events
 
-import Navim.DirContent
 import Data.NavimState
+import Navim.DirContent
 
 -- Main
 navim :: IO ()
@@ -41,45 +40,10 @@ navim = do
     let navPath = mconcat . intersperse "/" . reverse $ endState ^. navimHistory
     putStrLn navPath
 
-{-navimStatePaths :: Lens' NavimState (NonEmptyCursor DirContent)
-navimStatePaths = lens _navimStatePaths (\ns p -> ns { _navimStatePaths = p })
-
-navimHistory :: Lens' NavimState [FilePath]
-navimHistory = lens _navimHistory (\ns h -> ns { _navimHistory = h })
-
-navimMode :: Lens' NavimState Mode
-navimMode = lens _navimMode (\ns m -> ns { _navimMode = m })-}
-
-{-data Prompt
-    = CreateFile
-    | CreateDirectory
-    | Remove
-    | Rename
-    deriving (Show, Eq)
-
--- TODO: something about prisms for this
-data Mode
-    = Navigation -- normal file navigation
-    | Colon      -- colon commands: ends when input is empty or enter pressed
-        { _colonInput :: String }
-    | Input      -- waiting for user input with a given prompt
-        { _prompt :: Prompt        -- TODO: maybe sum type for prompt?
-        , _inputResponse :: String -- TODO: different data structure for fast snoc?
-        }
-    deriving (Show, Eq)
-
-data NavimState = NavimState
-    { _navimStatePaths :: NonEmptyCursor DirContent
-    , _navimHistory :: [FilePath]
-    , _navimMode :: Mode
-    } deriving (Show, Eq)
-makeLenses ''NavimState-}
-
-
 data ResourceName
-    = ResourceName
+    = PathsWidget
+    | InputBar
     deriving (Show, Eq, Ord)
-
 
 nonEmptyCursorReset :: NonEmptyCursor a -> NonEmptyCursor a
 nonEmptyCursorReset = makeNonEmptyCursor . rebuildNonEmptyCursor
@@ -141,11 +105,9 @@ drawNavim ns =
       inputBar
     ]
   where
-    pathsCursor = ns ^. navimStatePaths
-
     pathsWidget =
         padRight Max
-        . viewport ResourceName Vertical
+        . viewport PathsWidget Vertical
         . vBox
         . mconcat
         $ [ drawDirContent False <$> reverse (nonEmptyCursorPrev pathsCursor)
@@ -155,50 +117,52 @@ drawNavim ns =
             ]
           , drawDirContent False <$> nonEmptyCursorNext pathsCursor
           ]
+    pathsCursor = ns ^. navimStatePaths
 
     statusBar = str $
         case ns ^. navimMode of
-            InputMode (Input CreateFile _) ->
-                "Enter the name of the file to be created"
-            InputMode (Input CreateDirectory _) ->
-                "Enter the name of the directory to be created"
-            InputMode (Input Remove _) ->
-                case nonEmptyCursorCurrent pathsCursor of
-                    File name ->
-                        mconcat
-                            [ "Are you sure you want to remove the file "
-                            , name
-                            , "?"
-                            ]
-                    Directory "." ->
-                        "You may not remove the current directory from within."
-                    Directory ".." ->
-                        "You may not remove the parent directory from within."
-                    Directory name ->
-                        mconcat
-                            [ "Are you sure you want to remove the directory "
-                            , name
-                            , "?"
-                            ]
-            InputMode (Input Rename _) ->
-                case nonEmptyCursorCurrent pathsCursor of
-                    File name ->
-                        mconcat
-                            [ "Enter the new name for the file "
-                            , name
-                            , "."
-                            ]
-                    Directory "." ->
-                        "You may not rename the current directory from within."
-                    Directory ".." ->
-                        "You may not rename the parent directory from within."
-                    Directory name ->
-                        mconcat
-                            [ "Enter the new name for the directory "
-                            , name
-                            , "."
-                            ]
-
+            InputMode input ->
+                case input ^. prompt of
+                    CreateFile ->
+                        "Enter the name of the file to be created"
+                    CreateDirectory ->
+                        "Enter the name of the directory to be created"
+                    Remove ->
+                        case nonEmptyCursorCurrent pathsCursor of
+                            File name ->
+                                mconcat
+                                    [ "Are you sure you want to remove the file "
+                                    , name
+                                    , "?"
+                                    ]
+                            Directory "." ->
+                                "You may not remove the current directory from within."
+                            Directory ".." ->
+                                "You may not remove the parent directory from within."
+                            Directory name ->
+                                mconcat
+                                    [ "Are you sure you want to remove the directory "
+                                    , name
+                                    , "?"
+                                    ]
+                    Rename ->
+                        case nonEmptyCursorCurrent pathsCursor of
+                            File name ->
+                                mconcat
+                                    [ "Enter the new name for the file "
+                                    , name
+                                    , "."
+                                    ]
+                            Directory "." ->
+                                "You may not rename the current directory from within."
+                            Directory ".." ->
+                                "You may not rename the parent directory from within."
+                            Directory name ->
+                                mconcat
+                                    [ "Enter the new name for the directory "
+                                    , name
+                                    , "."
+                                    ]
             _ -> ('/':) . mconcat . intersperse "/" . reverse $ ns ^. navimHistory
 
     inputBar =
@@ -206,20 +170,27 @@ drawNavim ns =
             case ns ^. navimMode  of
                 NavigationMode Navigation ->
                     str "-- NAVIGATION --"
-                ColonMode (Colon reversedInput) ->
-                    withBottomCursor reversedInput
-                InputMode (Input CreateFile reversedInput) ->
-                    withBottomCursor $ reversedInput ++ reverse "File name: "
-                InputMode (Input CreateDirectory reversedInput) ->
-                    withBottomCursor $ reversedInput ++ reverse "Directory name: "
-                InputMode (Input Remove reversedInput) ->
-                    withBottomCursor $ reversedInput ++ reverse "Confirm (y/n): "
-                InputMode (Input Rename reversedInput) ->
-                    withBottomCursor $ reversedInput ++ reverse "New name: "
+                ColonMode colon ->
+                    withBottomCursor $ colon ^. colonInput
+                InputMode input ->
+                    case input ^. prompt of
+                        CreateFile ->
+                            withBottomCursor $
+                                input ^. inputResponse ++ reverse "File name: "
+                        CreateDirectory ->
+                            withBottomCursor $
+                                input ^. inputResponse ++ reverse "Directory name: "
+                        Remove ->
+                            withBottomCursor $
+                                input ^. inputResponse ++ reverse "Confirm (y/n): "
+                        Rename ->
+                            withBottomCursor $
+                                input ^. inputResponse ++ reverse "New name:"
 
+    -- todo: no need to be reversed when using custom Lens accessors
     withBottomCursor reversedInput =
         showCursor
-            ResourceName
+            InputBar
             (Location (textWidth reversedInput, 0))
             (str . reverse $ reversedInput)
 
@@ -297,50 +268,52 @@ handleEvent s e =
                 continue $
                     s & navimMode . _ColonMode . colonInput
                       %~ (c:)
-            (ColonMode (Colon [_]), KBS) ->
-                continue $
-                    s & navimMode
-                      .~ NavigationMode Navigation
-            (ColonMode (Colon (_:cs)), KBS) ->
-                continue $
-                    s & navimMode . _ColonMode . colonInput
-                      .~ cs
-            (ColonMode (Colon cs), KEnter) ->
-                colonCommand s . reverse $ cs
+            (ColonMode colon, KBS) ->
+                case colon ^. colonInput of
+                    []   -> error "Programmer error: colon input should never be empty"
+                    [_]  -> continue $
+                                s & navimMode
+                                  .~ NavigationMode Navigation
+                    _:cs -> continue $
+                                s & navimMode . _ColonMode . colonInput
+                                  .~ cs
+            (ColonMode colon, KEnter) ->
+                colonCommand s . reverse $ colon ^. colonInput
 
             (InputMode _, KChar c) ->
                 continue $
                     s & navimMode . _InputMode . inputResponse
                       %~ (c:)
-            (InputMode (Input _ (_:cs)), KBS) ->
-                continue $
-                    s & navimMode . _InputMode . inputResponse
-                      .~ cs
-            (InputMode (Input _ ""), KBS) ->
-                continue s
-
-            (InputMode (Input Remove inp), KEnter) ->
-                case nonEmptyCursorCurrent $ s ^. navimStatePaths of
-                    Directory "."  -> continue $
-                                          s & navimMode
-                                            .~ NavigationMode Navigation -- TODO: no silent failure pls
-                    Directory ".." -> continue $
-                                          s & navimMode
-                                             .~ NavigationMode Navigation -- TODO: no silent failure pls
-                    _              -> inputCommand s Remove . reverse $ inp
-            (InputMode (Input Rename inp), KEnter) ->
-                case nonEmptyCursorCurrent $ s ^. navimStatePaths of
-                    Directory "."  -> continue $
-                                          s & navimMode
-                                            .~ NavigationMode Navigation -- TODO: no silent failure pls
-                    Directory ".." -> continue $
-                                          s & navimMode
-                                            .~ NavigationMode Navigation -- TODO: no silent failure pls
-                    _              -> inputCommand s Rename . reverse $ inp
-
-            (InputMode (Input pr inp), KEnter) ->
-                inputCommand s pr . reverse $ inp
-
+            (InputMode input, KBS) ->
+                case input ^. inputResponse of
+                    []   -> continue s
+                    _:rs -> continue $
+                                s & navimMode . _InputMode . inputResponse
+                                  .~ rs
+            (InputMode input, KEnter) ->
+                case input ^. prompt of
+                    Remove ->
+                        case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                            -- TODO: no silent failure pls
+                            Directory "."  -> continue $
+                                                  s & navimMode
+                                                    .~ NavigationMode Navigation
+                            Directory ".." -> continue $
+                                                  s & navimMode
+                                                     .~ NavigationMode Navigation
+                            _              -> inputCommand s Remove . reverse $ input ^. inputResponse
+                    Rename ->
+                        case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                            -- TODO: no silent failure pls
+                            Directory "."  -> continue $
+                                                  s & navimMode
+                                                    .~ NavigationMode Navigation
+                            Directory ".." -> continue $
+                                                  s & navimMode
+                                                    .~ NavigationMode Navigation
+                            _              -> inputCommand s Rename . reverse $ input ^. inputResponse
+                    otherPrompt ->
+                        inputCommand s otherPrompt . reverse $ input ^. inputResponse
             (InputMode _, _) -> continue s -- TODO!!!!!!!!
 
             (_, _)        -> continue s
@@ -389,6 +362,7 @@ colonCommand s input =
                  s & navimMode
                    .~ NavigationMode Navigation
 
+-- TODO: get prompt from ns
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
 inputCommand ns CreateFile name = do
     success <- liftIO . createDirContentSafe $ File name
