@@ -12,6 +12,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe
 import Data.Traversable
 
+import Control.Lens
 import Control.Monad
 import Control.Monad.IO.Class
 
@@ -35,22 +36,32 @@ navim :: IO ()
 navim = do
     initState <- buildState Nothing
     endState  <- defaultMain navimApp initState
-    let navPath = join $ intersperse "/" $ reverse $ navHistory endState
+    let navPath = mconcat . intersperse "/" . reverse $ endState ^. navimHistory
     putStrLn navPath
 
 data NavimState = NavimState
-    { navimStatePaths :: NonEmptyCursor DirContent
-    , navHistory :: [FilePath]
-    , mode :: Mode
+    { _navimStatePaths :: NonEmptyCursor DirContent
+    , _navimHistory :: [FilePath]
+    , _navimMode :: Mode
     } deriving (Show, Eq)
 
+navimStatePaths :: Lens' NavimState (NonEmptyCursor DirContent)
+navimStatePaths = lens _navimStatePaths (\ns p -> ns { _navimStatePaths = p })
+
+navimHistory :: Lens' NavimState [FilePath]
+navimHistory = lens _navimHistory (\ns h -> ns { _navimHistory = h })
+
+navimMode :: Lens' NavimState Mode
+navimMode = lens _navimMode (\ns m -> ns { _navimMode = m })
+
+-- TODO: something about prisms for this
 data Mode
     = Navigation -- normal file navigation
     | Colon      -- colon commands: ends when input is empty or enter pressed
-        { colonInputReversed :: String }
+        { _colonInput :: String }
     | Input      -- waiting for user input with a given prompt
-        { prompt :: Prompt        -- TODO: maybe sum type for prompt?
-        , responseReversed :: String -- TODO: different data structure for fast snoc?
+        { _prompt :: Prompt        -- TODO: maybe sum type for prompt?
+        , _inputResponse :: String -- TODO: different data structure for fast snoc?
         }
     deriving (Show, Eq)
 
@@ -98,18 +109,15 @@ buildState prevState = do
                 Nothing -> do
                     curDir <- getCurrentDirectory
                     return NavimState
-                        { navimStatePaths = makeNonEmptyCursor ne
-                        , navHistory = reverse . splitOn '/' $ curDir
-                        , mode = Navigation
+                        { _navimStatePaths = makeNonEmptyCursor ne
+                        , _navimHistory = reverse . splitOn '/' $ curDir
+                        , _navimMode = Navigation
                         }
-                Just ps -> return ps
-                    { navimStatePaths =
-                          adjustCursor
-                              (navimStatePaths ps)
-                              (makeNonEmptyCursor ne)
-                    }
+                Just ps -> return $
+                               ps & navimStatePaths
+                                  %~ adjustCursor (makeNonEmptyCursor ne)
   where
-    adjustCursor oldNec = moveNextBy (length $ nonEmptyCursorPrev oldNec)
+    adjustCursor newNec oldNec = moveNextBy (length $ nonEmptyCursorPrev oldNec) newNec
     moveNextBy 0 newNec = newNec
     moveNextBy n newNec = case nonEmptyCursorSelectNext newNec of
                                Nothing   -> newNec
@@ -129,7 +137,7 @@ drawNavim ns =
       inputBar
     ]
   where
-    pathsCursor = navimStatePaths ns
+    pathsCursor = ns ^. navimStatePaths
 
     pathsWidget =
         padRight Max
@@ -144,8 +152,8 @@ drawNavim ns =
           , drawDirContent False <$> nonEmptyCursorNext pathsCursor
           ]
 
-    statusBar =
-        str $ case mode ns of
+    statusBar = str $
+        case ns ^. navimMode of
             Input CreateFile _ ->
                 "Enter the name of the file to be created"
             Input CreateDirectory _ ->
@@ -187,11 +195,11 @@ drawNavim ns =
                             , "."
                             ]
 
-            _ -> ('/':) . mconcat . intersperse "/" . reverse . navHistory $ ns
+            _ -> ('/':) . mconcat . intersperse "/" . reverse $ ns ^. navimHistory
 
     inputBar =
         padRight Max $
-            case mode ns of
+            case ns ^. navimMode  of
                 Navigation ->
                     str "-- NAVIGATION --"
                 Colon reversedInput ->
@@ -228,7 +236,7 @@ handleEvent s e =
         VtyEvent vtye ->
             case vtye of
                 EvKey key@(KChar ':') [] ->
-                    bottomInputOr (continue s { mode = Colon ":" }) key
+                    bottomInputOr (continue $ s & navimMode .~ Colon ":") key
                 EvKey key@(KChar 'j') [] ->
                     bottomInputOr (moveCursorWith nonEmptyCursorSelectNext s) key
                 EvKey key@(KChar 'k') [] ->
@@ -238,13 +246,13 @@ handleEvent s e =
                 EvKey key@(KChar 'G') [] ->
                     bottomInputOr (moveCursorWith (Just . nonEmptyCursorSelectLast) s) key
                 EvKey key@(KChar 'n') [] ->
-                    bottomInputOr (continue s { mode = Input CreateFile "" }) key
+                    bottomInputOr (continue $ s & navimMode .~ Input CreateFile "") key
                 EvKey key@(KChar 'n') [MMeta] ->
-                    bottomInputOr (continue s { mode = Input CreateDirectory "" }) key
+                    bottomInputOr (continue $ s & navimMode .~ Input CreateDirectory "") key
                 EvKey key@(KChar 'd') [] ->
-                    bottomInputOr (continue s { mode = Input Remove "" }) key
+                    bottomInputOr (continue $ s & navimMode .~ Input Remove "") key
                 EvKey key@(KChar 'r') [] ->
-                    bottomInputOr (continue s { mode = Input Rename "" }) key
+                    bottomInputOr (continue $ s & navimMode .~ Input Rename "") key
                 EvKey key@(KChar _)   [] ->
                     bottomInputOr (continue s) key
 
@@ -253,41 +261,41 @@ handleEvent s e =
 
                 EvKey KBS    [] -> bottomInputOr (continue s) KBS
                 EvKey KEnter [] -> bottomInputOr (performNavigate s) KEnter
-                EvKey KEsc   [] -> continue s { mode = Navigation }
+                EvKey KEsc   [] -> continue $ s & navimMode .~ Navigation
                 _ -> continue s
         _ -> continue s
   where
     bottomInputOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
     bottomInputOr navAction key =
-        case (mode s, key) of
+        case (s ^. navimMode, key) of
             (Navigation, _) -> navAction
 
             -- TODO: lens please...
             (Colon input, KChar c) ->
-                continue s { mode = Colon { colonInputReversed = c:input } }
+                continue $ s & navimMode .~ Colon { _colonInput = c:input }
             (Colon [c], KBS) ->
-                continue s { mode = Navigation }
+                continue $ s & navimMode .~ Navigation
             (Colon (c:cs), KBS) ->
-                continue s { mode = Colon { colonInputReversed = cs } }
+                continue $ s & navimMode .~ Colon { _colonInput = cs }
             (Colon cs, KEnter) ->
                 colonCommand s . reverse $ cs
 
             (inMode@(Input _ resp), KChar c) ->
-                continue s { mode =  inMode { responseReversed = c:resp } }
+                continue $ s & navimMode .~ inMode { _inputResponse = c:resp }
             (inMode@(Input _ (c:cs)), KBS) ->
-                continue s { mode =  inMode { responseReversed = cs } }
+                continue $ s & navimMode .~ inMode { _inputResponse = cs }
             (inMode@(Input _ ""), KBS) ->
-                continue s { mode =  inMode { responseReversed = "" } }
+                continue $ s & navimMode .~ inMode { _inputResponse = "" }
 
             (Input Remove inp, KEnter) ->
-                case nonEmptyCursorCurrent . navimStatePaths $ s of
-                    Directory "."  -> continue s { mode = Navigation } -- TODO: no silent failure pls
-                    Directory ".." -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                    Directory "."  -> continue $ s & navimMode .~ Navigation -- TODO: no silent failure pls
+                    Directory ".." -> continue $ s & navimMode .~ Navigation -- TODO: no silent failure pls
                     _              -> inputCommand s Remove . reverse $ inp
             (Input Rename inp, KEnter) ->
-                case nonEmptyCursorCurrent . navimStatePaths $ s of
-                    Directory "."  -> continue s { mode = Navigation } -- TODO: no silent failure pls
-                    Directory ".." -> continue s { mode = Navigation } -- TODO: no silent failure pls
+                case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                    Directory "."  -> continue $ s & navimMode .~ Navigation -- TODO: no silent failure pls
+                    Directory ".." -> continue $ s & navimMode .~ Navigation -- TODO: no silent failure pls
                     _              -> inputCommand s Rename . reverse $ inp
 
             (Input pr inp, KEnter) ->
@@ -302,65 +310,64 @@ handleEvent s e =
 moveCursorWith :: (NonEmptyCursor DirContent -> Maybe (NonEmptyCursor DirContent))
                -> NavimState
                -> EventM n (Next NavimState)
-moveCursorWith move state =
+moveCursorWith move ns =
     continue $
-        case move (navimStatePaths state) of
-            Nothing     -> state
-            Just newNec -> state {navimStatePaths = newNec}
+        case move $ ns ^. navimStatePaths of
+            Nothing     -> ns
+            Just newNec -> ns & navimStatePaths .~ newNec
 
 -- TODO: move cursor to parent directory when navigating on ".."
 performNavigate :: NavimState -> EventM n (Next NavimState)
 performNavigate ns =
-    case nonEmptyCursorCurrent nsPaths of
+    case nonEmptyCursorCurrent $ ns ^. navimStatePaths of
         File      _  -> continue ns
         Directory fp -> do
             liftIO $ setCurrentDirectory fp
             let (newHistory,
-                 nextFocus) = case (navHistory ns, fp) of
+                 nextFocus) = case (ns ^. navimHistory, fp) of
                                   (ps, ".")    -> (ps, ".")
                                   ([], "..")   -> ([], ".")
                                   (p:ps, "..") -> (ps, p)
                                   (ps, next)   -> (next:ps, ".")
             ns' <- liftIO . buildState $
-                       Just ns { navimStatePaths = nonEmptyCursorReset nsPaths }
-            continue ns' { navHistory = newHistory
-                         , navimStatePaths =
-                               let newPaths = navimStatePaths ns'
-                                   in fromMaybe (nonEmptyCursorReset newPaths) $
-                                          nonEmptyCursorSearch
-                                          ((== nextFocus) . getPath)
-                                          newPaths
-                         }
-  where
-    nsPaths = navimStatePaths ns
+                       Just $ ns & navimStatePaths
+                                 %~ nonEmptyCursorReset
+            continue $
+                ns' & navimHistory .~ newHistory
+                    & navimStatePaths %~ \newPaths ->
+                          fromMaybe (nonEmptyCursorReset newPaths) $
+                              nonEmptyCursorSearch
+                                  ((== nextFocus) . getPath)
+                                  newPaths
 
 colonCommand :: NavimState -> String -> EventM n (Next NavimState)
 colonCommand s input =
     case input of
         ":q" -> halt s
         -- TODO: other meta commands
-        _ -> continue s { mode = Navigation }
+        _ -> continue $
+                 s & navimMode .~ Navigation
 
 inputCommand :: NavimState -> Prompt -> String -> EventM n (Next NavimState)
 inputCommand ns CreateFile name = do
     success <- liftIO . createDirContentSafe $ File name
     ns'     <- liftIO . buildState $ Just ns
-    continue ns' { mode = Navigation } -- TODO: Navigation mode includes a Maybe Error field
+    continue $ ns' & navimMode .~ Navigation -- TODO: Navigation mode includes a Maybe Error field
 inputCommand ns CreateDirectory name = do
     success <- liftIO . createDirContentSafe $ Directory name
     ns'     <- liftIO . buildState $ Just ns
-    continue ns' { mode = Navigation } -- TODO: Navigation mode includes a Maybe Error field
+    continue $ ns' & navimMode .~ Navigation -- TODO: Navigation mode includes a Maybe Error field
 inputCommand ns Remove "y" = do
-    liftIO . removeDirContent . nonEmptyCursorCurrent . navimStatePaths $ ns
+    liftIO . removeDirContent . nonEmptyCursorCurrent $ ns ^. navimStatePaths
     ns' <- liftIO . buildState $ Just ns
-    continue ns' { mode = Navigation }
+    continue $ ns' & navimMode .~ Navigation
 inputCommand ns Remove _ =
-    continue ns { mode = Navigation }
+    continue $ ns & navimMode .~ Navigation
 inputCommand ns Rename newPath = do
     success <- liftIO $ renameDirContentSafe
-                   (nonEmptyCursorCurrent . navimStatePaths $ ns)
+                   (nonEmptyCursorCurrent $ ns ^. navimStatePaths)
                    newPath
     ns'     <- liftIO . buildState $ Just ns
-    continue ns' { mode = Navigation }
+    continue $ ns' & navimMode .~ Navigation
 
 {- END Event Handler Helpers -}

@@ -24,6 +24,7 @@ dependencies:
 - vty
 - directory
 - cursor
+- lens
 
 library:
   source-dirs: src
