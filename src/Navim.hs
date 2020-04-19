@@ -187,23 +187,22 @@ drawNavim ns =
                     case input ^. prompt of
                         CreateFile ->
                             withBottomCursor $
-                                input ^. inputResponse ++ reverse "File name: "
+                                "File name: " ++ input ^. inputResponse
                         CreateDirectory ->
                             withBottomCursor $
-                                input ^. inputResponse ++ reverse "Directory name: "
+                                "Directory name: " ++ input ^. inputResponse
                         Remove ->
                             withBottomCursor $
-                                input ^. inputResponse ++ reverse "Confirm (y/n): "
+                                "Confirm (y/n): " ++ input ^. inputResponse
                         Rename ->
                             withBottomCursor $
-                                input ^. inputResponse ++ reverse "New name:"
+                                "New name: " ++ input ^. inputResponse
 
-    -- todo: no need to be reversed when using custom Lens accessors
-    withBottomCursor reversedInput =
+    withBottomCursor input =
         showCursor
             InputBar
-            (Location (textWidth reversedInput, 0)) -- TODO: save screen width in NavimState and mod this by it
-            (strWrapDefault . reverse $ reversedInput)
+            (Location (textWidth input, 0)) -- TODO: save screen width in NavimState and mod this by it
+            (strWrapDefault input)
 
 
 drawDirContent :: Bool -> DirContent -> Widget n
@@ -273,6 +272,9 @@ handleEvent s e =
                 _ -> continue s
         _ -> continue s
   where
+    safeInit [] = []
+    safeInit xs = init xs
+
     bottomInputOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
     bottomInputOr navAction key =
         case (s ^. navimMode, key) of
@@ -282,29 +284,27 @@ handleEvent s e =
             (ColonMode _, KChar c) ->
                 continue $
                     s & navimMode . _ColonMode . colonInput
-                      %~ (c:)
+                      %~ (++ [c])
             (ColonMode colon, KBS) ->
                 case colon ^. colonInput of
                     []   -> error "Programmer error: colon input should never be empty"
                     [_]  -> continue $
                                 s & navimMode
                                   .~ NavigationMode Navigation
-                    _:cs -> continue $
-                                s & navimMode . _ColonMode . colonInput
-                                  .~ cs
+                    cs -> continue $
+                              s & navimMode . _ColonMode . colonInput
+                                %~ safeInit
             (ColonMode colon, KEnter) ->
-                colonCommand s . reverse $ colon ^. colonInput
+                colonCommand s $ colon ^. colonInput
 
             (InputMode _, KChar c) ->
                 continue $
                     s & navimMode . _InputMode . inputResponse
-                      %~ (c:)
-            (InputMode input, KBS) ->
-                case input ^. inputResponse of
-                    []   -> continue s
-                    _:rs -> continue $
-                                s & navimMode . _InputMode . inputResponse
-                                  .~ rs
+                      %~ (++ [c])
+            (InputMode _, KBS) ->
+                continue $
+                    s & navimMode . _InputMode . inputResponse
+                      %~ safeInit
             (InputMode input, KEnter) ->
                 case input ^. prompt of
                     Remove ->
@@ -316,7 +316,7 @@ handleEvent s e =
                             Directory ".." -> continue $
                                                   s & navimMode
                                                      .~ NavigationMode Navigation
-                            _              -> inputCommand s Remove . reverse $ input ^. inputResponse
+                            _              -> inputCommand s Remove $ input ^. inputResponse
                     Rename ->
                         case nonEmptyCursorCurrent $ s ^. navimStatePaths of
                             -- TODO: no silent failure pls
@@ -326,9 +326,9 @@ handleEvent s e =
                             Directory ".." -> continue $
                                                   s & navimMode
                                                     .~ NavigationMode Navigation
-                            _              -> inputCommand s Rename . reverse $ input ^. inputResponse
+                            _              -> inputCommand s Rename $ input ^. inputResponse
                     otherPrompt ->
-                        inputCommand s otherPrompt . reverse $ input ^. inputResponse
+                        inputCommand s otherPrompt $ input ^. inputResponse
             (InputMode _, _) -> continue s -- TODO!!!!!!!!
 
             (_, _)        -> continue s
