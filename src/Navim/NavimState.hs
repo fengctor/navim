@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Data.NavimState where
+module Navim.NavimState where
 
 import Cursor.Simple.List.NonEmpty
 
@@ -8,27 +8,35 @@ import Control.Lens
 
 import Navim.DirContent
 
-data Prompt
+data Command
     = CreateFile
     | CreateDirectory
     | Remove
     | Rename
     deriving (Show, Eq)
 
+errorMessage :: Command -> String
+errorMessage CreateFile      = "Could not create file"
+errorMessage CreateDirectory = "Could not create directory"
+errorMessage Remove          = "Could not delete selection"
+errorMessage Rename          = "Could not perform renaming"
+
 data Navigation
     = Navigation
+        { _errored :: Maybe Command }
     deriving (Show, Eq)
 makeLenses ''Navigation
 
 data Colon
-    = Colon { _colonInput :: String }
+    = Colon
+        { _colonInput :: String }
     deriving (Show, Eq)
 makeLenses ''Colon
 
 data Input
     = Input
-        { _prompt :: Prompt        -- TODO: maybe sum type for prompt?
-        , _inputResponse :: String -- TODO: different data structure for fast snoc?
+        { _command :: Command
+        , _inputResponse :: String
         }
     deriving (Show, Eq)
 makeLenses ''Input
