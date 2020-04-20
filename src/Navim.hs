@@ -226,57 +226,57 @@ drawDirContent selected dc =
 
 -- Event Handler
 handleEvent :: NavimState -> BrickEvent n e -> EventM n (Next NavimState)
-handleEvent s e =
+handleEvent ns e =
     case e of
         VtyEvent vtye ->
             case vtye of
                 EvKey key@(KChar ':') [] ->
                     bottomInputOr
-                        (continue $ s & navimMode .~ ColonMode (Colon ":"))
+                        (continue $ ns & navimMode .~ ColonMode (Colon ":"))
                         key
                 EvKey key@(KChar 'j') [] ->
                     bottomInputOr
-                        (moveCursorWith nonEmptyCursorSelectNext s)
+                        (moveCursorWith nonEmptyCursorSelectNext ns)
                         key
                 EvKey key@(KChar 'k') [] ->
                     bottomInputOr
-                        (moveCursorWith nonEmptyCursorSelectPrev s)
+                        (moveCursorWith nonEmptyCursorSelectPrev ns)
                         key
                 EvKey key@(KChar 'g') [] ->
                     bottomInputOr
-                        (moveCursorWith (Just . nonEmptyCursorSelectFirst) s)
+                        (moveCursorWith (Just . nonEmptyCursorSelectFirst) ns)
                         key
                 EvKey key@(KChar 'G') [] ->
                     bottomInputOr
-                        (moveCursorWith (Just . nonEmptyCursorSelectLast) s)
+                        (moveCursorWith (Just . nonEmptyCursorSelectLast) ns)
                         key
                 EvKey key@(KChar 'n') [] ->
                     bottomInputOr
-                        (continue $ toInputMode CreateFile s)
+                        (continue $ toInputMode CreateFile ns)
                         key
                 EvKey key@(KChar 'n') [MMeta] ->
                     bottomInputOr
-                        (continue $ toInputMode CreateDirectory s)
+                        (continue $ toInputMode CreateDirectory ns)
                         key
                 EvKey key@(KChar 'd') [] ->
                     bottomInputOr
-                        (continue $ toInputMode Remove s)
+                        (continue $ toInputMode Remove ns)
                         key
                 EvKey key@(KChar 'r') [] ->
                     bottomInputOr
-                        (continue $ toInputMode Rename s)
+                        (continue $ toInputMode Rename ns)
                         key
                 EvKey key@(KChar _)   [] ->
-                    bottomInputOr (continue s) key
+                    bottomInputOr (continue ns) key
 
-                EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext s
-                EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev s
+                EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext ns
+                EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev ns
 
-                EvKey KBS    [] -> bottomInputOr (continue s) KBS
-                EvKey KEnter [] -> bottomInputOr (performNavigate s) KEnter
-                EvKey KEsc   [] -> continue $ s & navimMode .~ NavigationMode (Navigation Nothing)
-                _ -> continue s
-        _ -> continue s
+                EvKey KBS    [] -> bottomInputOr (continue ns) KBS
+                EvKey KEnter [] -> bottomInputOr (performNavigate ns) KEnter
+                EvKey KEsc   [] -> continue $ ns & navimMode .~ NavigationMode (Navigation Nothing)
+                _ -> continue ns
+        _ -> continue ns
   where
     safeInit [] = []
     safeInit xs = init xs
@@ -285,61 +285,71 @@ handleEvent s e =
 
     bottomInputOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
     bottomInputOr navAction key =
-        case (s ^. navimMode, key) of
+        case (ns ^. navimMode, key) of
             (NavigationMode _, _) -> navAction
 
-            -- TODO: lens please...
             (ColonMode _, KChar c) ->
                 continue $
-                    s & navimMode . _ColonMode . colonInput
-                      %~ (++ [c])
+                    ns & navimMode . _ColonMode . colonInput
+                       %~ (++ [c])
             (ColonMode colon, KBS) ->
                 case colon ^. colonInput of
-                    []   -> error "Programmer error: colon input should never be empty"
-                    [_]  -> continue $
-                                s & navimMode
-                                  .~ NavigationMode (Navigation Nothing)
-                    cs -> continue $
-                              s & navimMode . _ColonMode . colonInput
-                                %~ safeInit
+                    [] ->
+                        error "Programmer error: colon input should never be empty"
+                    [_] ->
+                        continue $
+                            ns & navimMode
+                               .~ NavigationMode (Navigation Nothing)
+                    cs ->
+                        continue $
+                            ns & navimMode . _ColonMode . colonInput
+                               %~ safeInit
             (ColonMode colon, KEnter) ->
-                colonCommand s $ colon ^. colonInput
+                colonCommand ns $ colon ^. colonInput
 
             (InputMode _, KChar c) ->
                 continue $
-                    s & navimMode . _InputMode . inputResponse
-                      %~ (++ [c])
+                    ns & navimMode . _InputMode . inputResponse
+                       %~ (++ [c])
             (InputMode _, KBS) ->
                 continue $
-                    s & navimMode . _InputMode . inputResponse
-                      %~ safeInit
+                    ns & navimMode . _InputMode . inputResponse
+                       %~ safeInit
             (InputMode input, KEnter) ->
                 case input ^. command of
                     Remove ->
-                        case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                        case nonEmptyCursorCurrent $ ns ^. navimStatePaths of
                             -- TODO: better error message pls
-                            Directory "."  -> continue $
-                                                  s & navimMode
-                                                    .~ NavigationMode (Navigation $ Just Remove)
-                            Directory ".." -> continue $
-                                                  s & navimMode
-                                                     .~ NavigationMode (Navigation $ Just Remove)
-                            _              -> inputCommand s Remove $ input ^. inputResponse
+                            Directory "." ->
+                                continue $
+                                    ns & navimMode
+                                       .~ NavigationMode (Navigation $ Just Remove)
+                            Directory ".." ->
+                                continue $
+                                    ns & navimMode
+                                       .~ NavigationMode (Navigation $ Just Remove)
+                            _ ->
+                                inputCommand ns Remove $ input ^. inputResponse
                     Rename ->
-                        case nonEmptyCursorCurrent $ s ^. navimStatePaths of
+                        case nonEmptyCursorCurrent $ ns ^. navimStatePaths of
                             -- TODO: better error message pls
-                            Directory "."  -> continue $
-                                                  s & navimMode
-                                                    .~ NavigationMode (Navigation $ Just Rename)
-                            Directory ".." -> continue $
-                                                  s & navimMode
-                                                    .~ NavigationMode (Navigation $ Just Rename)
-                            _              -> inputCommand s Rename $ input ^. inputResponse
+                            Directory "." ->
+                                continue $
+                                    ns & navimMode
+                                       .~ NavigationMode (Navigation $ Just Rename)
+                            Directory ".." ->
+                                continue $
+                                    ns & navimMode
+                                       .~ NavigationMode (Navigation $ Just Rename)
+                            _ ->
+                                inputCommand ns Rename $ input ^. inputResponse
                     otherCommand ->
-                        inputCommand s otherCommand $ input ^. inputResponse
-            (InputMode _, _) -> continue s -- TODO!!!!!!!!
+                        inputCommand ns otherCommand $ input ^. inputResponse
+            (InputMode _, _) ->
+                continue ns -- TODO!!!!!!!!
 
-            (_, _)        -> continue s
+            (_, _) ->
+                continue ns
 
 {- BEGIN Event Handler Helpers -}
 
@@ -357,7 +367,6 @@ moveCursorWith move ns =
                               & navimMode . _NavigationMode . errored
                               .~ Nothing
 
--- TODO: move cursor to parent directory when navigating on ".."
 performNavigate :: NavimState -> EventM n (Next NavimState)
 performNavigate ns =
     case nonEmptyCursorCurrent $ ns ^. navimStatePaths of
@@ -382,13 +391,13 @@ performNavigate ns =
                                   newPaths
 
 colonCommand :: NavimState -> String -> EventM n (Next NavimState)
-colonCommand s input =
+colonCommand ns input =
     case input of
-        ":q" -> halt s
+        ":q" -> halt ns
         -- TODO: other meta commands
         _ -> continue $
-                 s & navimMode
-                   .~ NavigationMode (Navigation Nothing)
+                 ns & navimMode
+                    .~ NavigationMode (Navigation Nothing)
 
 -- TODO: get Command from ns
 inputCommand :: NavimState -> Command -> String -> EventM n (Next NavimState)
