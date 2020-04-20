@@ -21,13 +21,13 @@ errorMessage CreateDirectory = "Could not create directory"
 errorMessage Remove          = "Could not delete selection"
 errorMessage Rename          = "Could not perform renaming"
 
-data Navigation
+newtype Navigation
     = Navigation
         { _errored :: Maybe Command }
     deriving (Show, Eq)
 makeLenses ''Navigation
 
-data Colon
+newtype Colon
     = Colon
         { _colonInput :: String }
     deriving (Show, Eq)

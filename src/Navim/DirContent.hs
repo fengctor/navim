@@ -57,8 +57,8 @@ createDirContentSafe dc = do
                     File      name -> writeFile name ""
                     Directory name -> createDirectory name
 
-renameDirContentSafe :: DirContent -> String -> IO Bool
-renameDirContentSafe dc newPath = do
+renameDirContentSafe :: String -> DirContent -> IO Bool
+renameDirContentSafe newPath dc = do
     curDir <- getCurrentDirectory
     let (newPathName, newPathDir) = nameAndDirectory $ fromRelativePath curDir newPath
     newPathDirContents <- getDirectoryContents newPathDir

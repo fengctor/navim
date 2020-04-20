@@ -328,8 +328,16 @@ handleEvent ns e =
                                 continue $
                                     ns & navimMode
                                        .~ NavigationMode (Navigation $ Just Remove)
-                            _ ->
-                                inputCommand ns Remove $ input ^. inputResponse
+                            _ -> do
+                                success <- liftIO $ inputCommand ns
+                                ns'     <- liftIO . buildState $ Just ns
+                                continue $
+                                    ns' & navimMode
+                                        .~ NavigationMode
+                                               (Navigation $
+                                                   if success
+                                                      then Nothing
+                                                      else Just Remove)
                     Rename ->
                         case nonEmptyCursorCurrent $ ns ^. navimStatePaths of
                             -- TODO: better error message pls
@@ -341,10 +349,26 @@ handleEvent ns e =
                                 continue $
                                     ns & navimMode
                                        .~ NavigationMode (Navigation $ Just Rename)
-                            _ ->
-                                inputCommand ns Rename $ input ^. inputResponse
-                    otherCommand ->
-                        inputCommand ns otherCommand $ input ^. inputResponse
+                            _ -> do
+                                success <- liftIO $ inputCommand ns
+                                ns'     <- liftIO . buildState $ Just ns
+                                continue $
+                                    ns' & navimMode
+                                        .~ NavigationMode
+                                               (Navigation $
+                                                   if success
+                                                      then Nothing
+                                                      else Just Rename)
+                    otherCommand -> do
+                        success <- liftIO $ inputCommand ns
+                        ns'     <- liftIO . buildState $ Just ns
+                        continue $
+                            ns' & navimMode
+                                .~ NavigationMode
+                                       (Navigation $
+                                           if success
+                                              then Nothing
+                                              else Just otherCommand)
             (InputMode _, _) ->
                 continue ns -- TODO!!!!!!!!
 
@@ -399,49 +423,26 @@ colonCommand ns input =
                  ns & navimMode
                     .~ NavigationMode (Navigation Nothing)
 
--- TODO: get Command from ns
-inputCommand :: NavimState -> Command -> String -> EventM n (Next NavimState)
-inputCommand ns CreateFile name = do
-    success <- liftIO . createDirContentSafe $ File name
-    ns'     <- liftIO . buildState $ Just ns
-    continue $
-        ns' & navimMode
-            .~ NavigationMode
-                   (Navigation $
-                       if success
-                          then Nothing
-                          else Just CreateFile)
-inputCommand ns CreateDirectory name = do
-    success <- liftIO . createDirContentSafe $ Directory name
-    ns'     <- liftIO . buildState $ Just ns
-    continue $
-        ns' & navimMode
-            .~ NavigationMode
-                   (Navigation $
-                       if success
-                          then Nothing
-                          else Just CreateDirectory)
-inputCommand ns Remove "y" = do
-    liftIO . removeDirContent . nonEmptyCursorCurrent $ ns ^. navimStatePaths
-    ns' <- liftIO . buildState $ Just ns
-    continue $
-        ns' & navimMode
-            .~ NavigationMode (Navigation Nothing)
-inputCommand ns Remove _ =
-    continue $
-        ns & navimMode
-           .~ NavigationMode (Navigation Nothing)
-inputCommand ns Rename newPath = do
-    success <- liftIO $ renameDirContentSafe
-                   (nonEmptyCursorCurrent $ ns ^. navimStatePaths)
-                   newPath
-    ns'     <- liftIO . buildState $ Just ns
-    continue $
-        ns' & navimMode
-            .~ NavigationMode
-                   (Navigation $
-                       if success
-                          then Nothing
-                          else Just Rename)
+-- TODO: maybe having Command as a param is a better idea
+inputCommand :: NavimState -> IO Bool
+inputCommand ns =
+    case ns ^. navimMode of
+        InputMode input ->
+            let entered = input ^. inputResponse in
+            case input ^. command of
+                CreateFile ->
+                    createDirContentSafe $ File entered
+                CreateDirectory ->
+                    createDirContentSafe $ Directory entered
+                Remove ->
+                    case entered of
+                        "y" -> (True <$)                 -- TODO: might error based on permissions
+                               $ onSelected removeDirContent
+                        _   -> return True
+                Rename ->
+                    onSelected $ renameDirContentSafe entered
+        _ -> return False -- TODO: kind of a silent error
+ where
+    onSelected = ($ nonEmptyCursorCurrent (ns ^. navimStatePaths))
 
 {- END Event Handler Helpers -}
