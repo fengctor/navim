@@ -311,7 +311,10 @@ handleEvent ns e =
                                                   . _NavigationMode . displayMessage
                                                   .~ Error Copy
                                 File name ->
-                                    ns & navimClipboard
+                                    ns & navimMode
+                                       . _NavigationMode . displayMessage
+                                       .~ Success Copy
+                                       & navimClipboard
                                        .~ ns ^. navimHistory
                                               . to (Just
                                                     . File
