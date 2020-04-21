@@ -57,6 +57,7 @@ createDirContentSafe dc = do
                     File      name -> writeFile name ""
                     Directory name -> createDirectory name
 
+-- newPath: relative path from current directory which dc will be renamed to
 renameDirContentSafe :: String -> DirContent -> IO Bool
 renameDirContentSafe newPath dc = do
     curDir <- getCurrentDirectory
@@ -66,7 +67,7 @@ renameDirContentSafe newPath dc = do
         then return False
         else True <$ renamePath (getPath dc) newPath
 
--- Using absolute path destination
+-- dest: absolute path to destination
 copyDirContentSafe :: String -> DirContent -> IO Bool
 copyDirContentSafe dest (Directory _) = return False -- Todo: handle directories
 copyDirContentSafe dest (File name)   = do
@@ -78,14 +79,20 @@ copyDirContentSafe dest (File name)   = do
        then return False
        else True <$ copyFile name dest
 
-
-removeDirContent :: DirContent -> IO ()
-removeDirContent (File name)      = removeFile name
-removeDirContent (Directory name) = removeDirectoryRecursive name
+-- TODO: may fail based on permissions
+removeDirContentSafe :: DirContent -> IO Bool
+removeDirContentSafe (File name)      = True <$ removeFile name
+removeDirContentSafe (Directory name) = True <$ removeDirectoryRecursive name
 
 getCurrentDirContents :: IO [DirContent]
 getCurrentDirContents = do
     curdir      <- getCurrentDirectory
     rawContents <- getDirectoryContents curdir
+    for rawContents $ \fp ->
+        bool (Directory fp) (File fp) <$> doesFileExist fp
+
+getDirContents :: FilePath -> IO [DirContent]
+getDirContents dir = do
+    rawContents <- getDirectoryContents dir
     for rawContents $ \fp ->
         bool (Directory fp) (File fp) <$> doesFileExist fp

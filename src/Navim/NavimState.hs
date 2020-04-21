@@ -17,18 +17,31 @@ data Command
     | Paste
     deriving (Show, Eq)
 
-errorMessage :: Command -> String
-errorMessage CreateFile      = "Could not create file"
-errorMessage CreateDirectory = "Could not create directory"
-errorMessage Remove          = "Could not delete selection"
-errorMessage Rename          = "Could not perform renaming"
-errorMessage Copy            = "Could not copy selection"
-errorMessage Paste           = "Could not perform paste"
+messageString :: Message -> String
+messageString Indicate                   = "--NAVIGATION--"
+messageString (Success CreateFile)       = "File creation succeeded"
+messageString (Success CreateDirectory)  = "Directory creation succeeded"
+messageString (Success Remove)           = "Deletion succeeded"
+messageString (Success Rename)           = "Renaming succeeded"
+messageString (Success Copy)             = "Copied content to clipboard"
+messageString (Success Paste)            = "Clipboard content pasted"
+messageString (Error CreateFile)         = "File creation failed"
+messageString (Error CreateDirectory)    = "Directory creation failed"
+messageString (Error Remove)             = "Deletion failed"
+messageString (Error Rename)             = "Renaming failed"
+messageString (Error Copy)               = "Cannot copy content to clipboard"
+messageString (Error Paste)              = "CAnnot paste clipboard content"
+
+data Message
+    = Indicate
+    | Success Command
+    | Error Command
+    deriving (Show, Eq)
 
 -- TODO: have field be a message to display, which can be an error or a regular message
 newtype Navigation
     = Navigation
-        { _errored :: Maybe Command }
+        { _displayMessage :: Message }
     deriving (Show, Eq)
 makeLenses ''Navigation
 
