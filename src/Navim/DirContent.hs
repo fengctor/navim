@@ -66,6 +66,19 @@ renameDirContentSafe newPath dc = do
         then return False
         else True <$ renamePath (getPath dc) newPath
 
+-- Using absolute path destination
+copyDirContentSafe :: String -> DirContent -> IO Bool
+copyDirContentSafe dest (Directory _) = return False -- Todo: handle directories
+copyDirContentSafe dest (File name)   = do
+    curDir <- getCurrentDirectory
+    let (destName, destDir) = nameAndDirectory dest
+    -- TODO: check destDir is a directory
+    destDirContents <- getDirectoryContents destDir
+    if null destName || destName `elem` destDirContents
+       then return False
+       else True <$ copyFile name dest
+
+
 removeDirContent :: DirContent -> IO ()
 removeDirContent (File name)      = removeFile name
 removeDirContent (Directory name) = removeDirectoryRecursive name

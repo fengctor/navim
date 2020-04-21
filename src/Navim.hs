@@ -87,6 +87,7 @@ buildState prevState = do
                         { _navimStatePaths = makeNonEmptyCursor ne
                         , _navimHistory = reverse . splitOn '/' $ curDir
                         , _navimMode = NavigationMode $ Navigation Nothing
+                        , _navimClipboard = Nothing
                         }
                 Just ps -> return $
                                ps & navimStatePaths
@@ -132,6 +133,7 @@ drawNavim ns =
             ]
           , drawDirContent False <$> nonEmptyCursorNext pathsCursor
           ]
+
     pathsCursor = ns ^. navimStatePaths
 
     statusBar = str $
@@ -178,6 +180,19 @@ drawNavim ns =
                                     , name
                                     , "."
                                     ]
+                    Paste ->
+                        case ns ^. navimClipboard of
+                            Nothing ->
+                                "Clipboard is empty"
+                            Just (Directory _) ->
+                                "Directory copy/paste is currently unsupported"
+                            Just (File name) ->
+                                mconcat
+                                    [ "Are you sure you want to copy "
+                                    , name
+                                    , " into the current directory?"
+                                    ]
+
             _ -> ns ^. navimHistory
                      . to (('/':) . mconcat . intersperse "/" . reverse)
 
@@ -201,6 +216,8 @@ drawNavim ns =
     inputCommandText CreateDirectory = "Directory name: "
     inputCommandText Remove          = "Confirm (y/n): "
     inputCommandText Rename          = "New name: "
+    inputCommandText Copy            = "Should never use this... TODO"
+    inputCommandText Paste           = "Confirm (y/n): "
 
     withBottomCursor input =
         showCursor
@@ -263,6 +280,32 @@ handleEvent ns e =
                     bottomInputOr
                         (continue $ toInputMode Rename ns)
                         key
+                EvKey key@(KChar 'y') [] -> -- TODO: do nothing on Directory for now
+                    bottomInputOr
+                        (continue $
+                            case ns ^. navimStatePaths
+                                     . to nonEmptyCursorCurrent of
+                                Directory _ -> ns & navimMode . _NavigationMode . errored
+                                                  .~ Just Copy
+                                File name ->
+                                    ns & navimClipboard
+                                       .~ ns ^. navimHistory
+                                              . to (Just
+                                                    . File
+                                                    . ('/':)
+                                                    . mconcat
+                                                    . intersperse "/"
+                                                    . reverse
+                                                    . ((ns ^. navimStatePaths
+                                                            . to (getPath
+                                                                  . nonEmptyCursorCurrent)
+                                                       ) :))) -- :)
+                        key
+                EvKey key@(KChar 'p') [] ->
+                    bottomInputOr
+                        (continue $ toInputMode Paste ns)
+                        key
+
                 EvKey key@(KChar _)   [] ->
                     bottomInputOr (continue ns) key
 
@@ -433,6 +476,20 @@ inputCommand ns =
                         _   -> return True
                 Rename ->
                     onSelected $ renameDirContentSafe entered
+                Paste ->
+                    case (entered, ns ^. navimClipboard) of
+                        ("y", Just clip) ->
+                            let (clipName, _) = nameAndDirectory . getPath $ clip in
+                            copyDirContentSafe
+                                (ns ^. navimHistory
+                                     . to (('/':)
+                                           . mconcat
+                                           . intersperse "/"
+                                           . reverse
+                                           . (clipName :)))
+                                clip
+                        _ ->
+                            return True
         _ -> return False -- TODO: kind of a silent error
  where
     onSelected = ($ nonEmptyCursorCurrent (ns ^. navimStatePaths))

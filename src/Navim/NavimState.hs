@@ -13,6 +13,8 @@ data Command
     | CreateDirectory
     | Remove
     | Rename
+    | Copy
+    | Paste
     deriving (Show, Eq)
 
 errorMessage :: Command -> String
@@ -20,7 +22,10 @@ errorMessage CreateFile      = "Could not create file"
 errorMessage CreateDirectory = "Could not create directory"
 errorMessage Remove          = "Could not delete selection"
 errorMessage Rename          = "Could not perform renaming"
+errorMessage Copy            = "Could not copy selection"
+errorMessage Paste           = "Could not perform paste"
 
+-- TODO: have field be a message to display, which can be an error or a regular message
 newtype Navigation
     = Navigation
         { _errored :: Maybe Command }
@@ -53,5 +58,6 @@ data NavimState = NavimState
     { _navimStatePaths :: NonEmptyCursor DirContent
     , _navimHistory :: [FilePath]
     , _navimMode :: Mode
+    , _navimClipboard :: Maybe DirContent
     } deriving (Show, Eq)
 makeLenses ''NavimState
