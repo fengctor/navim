@@ -467,8 +467,12 @@ performNavigate ns =
                        Just $ ns & navimStatePaths
                                  %~ nonEmptyCursorReset
             continue $
-                ns' & navimHistory .~ newHistory
-                    & navimStatePaths %~ \newPaths ->
+                ns' & navimMode . _NavigationMode . displayMessage
+                    .~ Indicate
+                    & navimHistory
+                    .~ newHistory
+                    & navimStatePaths
+                    %~ \newPaths ->
                           fromMaybe (nonEmptyCursorReset newPaths) $
                               nonEmptyCursorSearch
                                   ((== nextFocus) . getPath)
