@@ -4,6 +4,7 @@ module Navim where
 
 import System.Directory
 import System.Exit
+import System.Process
 
 import Data.Bool
 import Data.List
@@ -266,7 +267,7 @@ handleEvent ns e =
                     bottomInputOr
                         (continue $ toInputMode CreateFile ns)
                         key
-                EvKey key@(KChar 'n') [MMeta] ->
+                EvKey key@(KChar 'N') [] ->
                     bottomInputOr
                         (continue $ toInputMode CreateDirectory ns)
                         key
@@ -332,6 +333,16 @@ handleEvent ns e =
                     bottomInputOr
                         (continue $ toInputMode Paste ns)
                         key
+                EvKey key@(KChar 'v') [] ->
+                    bottomInputOr
+                        (suspendAndResume $
+                            ns <$
+                            callProcess
+                                "vim"
+                                 [ns ^. navimStatePaths
+                                      . to (getPath . nonEmptyCursorCurrent)]
+                        )
+                        key
 
                 EvKey key@(KChar _) [] ->
                     bottomInputOr (continue ns) key
@@ -343,7 +354,7 @@ handleEvent ns e =
                 EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev ns
 
                 EvKey KBS    [] -> bottomInputOr (continue ns) KBS
-                EvKey KEnter [] -> bottomInputOr (performNavigate ns) KEnter
+                EvKey KEnter [] -> bottomInputOr (previewOrNavigate ns) KEnter
                 EvKey KEsc   [] -> continue $ ns & navimMode .~ NavigationMode (Navigation Indicate)
                 _ -> continue ns
         _ -> continue ns
@@ -453,11 +464,17 @@ moveCursorWith move ns =
                               & navimMode . _NavigationMode . displayMessage
                               .~ Indicate
 
-performNavigate :: NavimState -> EventM n (Next NavimState)
-performNavigate ns =
+previewOrNavigate :: NavimState -> EventM n (Next NavimState)
+previewOrNavigate ns =
     case ns ^. navimStatePaths
              . to nonEmptyCursorCurrent of
-        File      _  -> continue ns
+        File      fp ->
+            suspendAndResume $
+                ns <$
+                callProcess
+                    "less"
+                    [ns ^. navimStatePaths
+                         . to (getPath . nonEmptyCursorCurrent)]
         Directory fp -> do
             liftIO $ setCurrentDirectory fp
             let (newHistory,

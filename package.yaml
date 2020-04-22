@@ -26,6 +26,7 @@ dependencies:
 - cursor
 - lens
 - word-wrap
+- process
 
 library:
   source-dirs: src

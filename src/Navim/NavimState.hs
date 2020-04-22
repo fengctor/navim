@@ -30,7 +30,7 @@ messageString (Error CreateDirectory)    = "Directory creation failed"
 messageString (Error Remove)             = "Deletion failed"
 messageString (Error Rename)             = "Renaming failed"
 messageString (Error Copy)               = "Cannot copy content to clipboard"
-messageString (Error Paste)              = "CAnnot paste clipboard content"
+messageString (Error Paste)              = "Cannot paste clipboard content"
 
 data Message
     = Indicate
