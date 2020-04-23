@@ -75,7 +75,6 @@ data Message
     | Error Command DirContentActionError
     deriving (Show, Eq)
 
--- TODO: have field be a message to display, which can be an error or a regular message
 newtype Navigation
     = Navigation
         { _displayMessage :: Message }
@@ -96,7 +95,6 @@ data Input
     deriving (Show, Eq)
 makeLenses ''Input
 
--- TODO: something about prisms for this
 data Mode
     = NavigationMode Navigation -- normal file navigation
     | ColonMode Colon           -- colon commands: ends when input is empty or enter pressed
@@ -104,9 +102,37 @@ data Mode
     deriving (Show, Eq)
 makePrisms ''Mode
 
+-- Undo stack, current directory, and redo stack
+data DirHistory
+    = DirHistory
+        { _undoDirectories :: [FilePath]
+        , _currentDirectory :: FilePath
+        , _redoDirectories :: [FilePath]
+        }
+    deriving (Show, Eq)
+makeLenses ''DirHistory
+
+undoDirHistory :: DirHistory -> DirHistory
+undoDirHistory dh =
+    case dh of
+        (DirHistory [] _ _)      -> dh
+        (DirHistory (u:us) c rs) -> DirHistory us u (c:rs)
+
+redoDirHistory :: DirHistory -> DirHistory
+redoDirHistory dh =
+    case dh of
+        (DirHistory _ _ [])      -> dh
+        (DirHistory us c (r:rs)) -> DirHistory (c:us) r rs
+
+-- Does nothing if the "new" directory is the same as before
+withNewCurrentDir :: FilePath -> DirHistory -> DirHistory
+withNewCurrentDir fp (DirHistory []     c _) = DirHistory [c] fp []
+withNewCurrentDir fp (DirHistory (u:us) c rs)
+    | otherwise = DirHistory (c:u:us) fp []
+
 data NavimState = NavimState
     { _navimStatePaths :: NonEmptyCursor DirContent
-    , _navimHistory :: [FilePath]
+    , _navimHistory :: DirHistory
     , _navimMode :: Mode
     , _navimClipboard :: Maybe DirContent
     } deriving (Show, Eq)

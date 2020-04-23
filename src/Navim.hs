@@ -40,9 +40,8 @@ navim :: IO ()
 navim = do
     initState <- buildState Nothing
     endState  <- defaultMain navimApp initState
-    let navPath = endState ^. navimHistory
-                            . to (('/':) . mconcat . intersperse "/" . reverse)
-    putStrLn navPath
+    let DirHistory _ cur _ = endState ^. navimHistory
+    putStrLn cur
 
 data ResourceName
     = PathsWidget
@@ -87,7 +86,7 @@ buildState prevState = do
                 Nothing ->
                     return NavimState
                         { _navimStatePaths = makeNonEmptyCursor ne
-                        , _navimHistory = reverse . splitOn '/' $ curDir
+                        , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
                         , _navimClipboard = Nothing
                         }
@@ -190,7 +189,7 @@ drawNavim ns =
                                     ]
 
             _ -> ns ^. navimHistory
-                     . to (('/':) . mconcat . intersperse "/" . reverse)
+                     . currentDirectory
 
     inputBar =
         padRight Max $
@@ -307,18 +306,11 @@ handleEvent ns e =
                                        . _NavigationMode . displayMessage
                                        .~ Success Copy
                                        & navimClipboard
-                                       .~ ns ^. navimHistory
-                                              . to (Just
+                                       .~ (ns ^. navimHistory
+                                               . currentDirectory
+                                               . to (Just
                                                     . File
-                                                    . ('/':)
-                                                    . mconcat
-                                                    . intersperse "/"
-                                                    . reverse
-                                                    . ((ns ^. navimStatePaths
-                                                            . to (getPath
-                                                                  . nonEmptyCursorCurrent)
-                                                       ) :)  -- :)
-                                                   )
+                                                    . (++ name)))
                 EvKey key@(KChar 'p') [] ->
                     givenCommandOrInput key $
                         continue $
@@ -434,21 +426,21 @@ previewOrNavigate ns =
                     [ns ^. navimStatePaths
                          . to (getPath . nonEmptyCursorCurrent)]
         Directory fp -> do
+            let (curDir, _) = ns ^. navimHistory
+                                  . currentDirectory
+                                  . to nameAndDirectory
+            let nextFocus = if fp == ".." then curDir else "."
             liftIO $ setCurrentDirectory fp
-            let (newHistory,
-                 nextFocus) = case (ns ^. navimHistory, fp) of
-                                  (ps, ".")    -> (ps, ".")
-                                  ([], "..")   -> ([], ".")
-                                  (p:ps, "..") -> (ps, p)
-                                  (ps, next)   -> (next:ps, ".")
-            ns' <- liftIO . buildState $
-                       Just $ ns & navimStatePaths
-                                 %~ nonEmptyCursorReset
+            newCurDir <- liftIO getCurrentDirectory
+            ns'       <- liftIO . buildState $
+                             Just $
+                                 ns & navimStatePaths
+                                    %~ nonEmptyCursorReset
             continue $
                 ns' & navimMode . _NavigationMode . displayMessage
                     .~ Indicate
                     & navimHistory
-                    .~ newHistory
+                    %~ withNewCurrentDir newCurDir
                     & navimStatePaths
                     %~ \newPaths ->
                           fromMaybe (nonEmptyCursorReset newPaths) $
@@ -495,11 +487,7 @@ inputCommand ns =
                             let (clipName, _) = nameAndDirectory . getPath $ clip in
                             copyDirContentSafe
                                 (ns ^. navimHistory
-                                     . to (('/':)
-                                           . mconcat
-                                           . intersperse "/"
-                                           . reverse
-                                           . (clipName :)))
+                                     . currentDirectory)
                                 clip
                         _ ->
                             return $ DCError Cancelled
