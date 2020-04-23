@@ -19,23 +19,60 @@ data Command
 
 messageString :: Message -> String
 messageString Indicate                   = "--NAVIGATION--"
+
 messageString (Success CreateFile)       = "File creation succeeded"
 messageString (Success CreateDirectory)  = "Directory creation succeeded"
 messageString (Success Remove)           = "Deletion succeeded"
 messageString (Success Rename)           = "Renaming succeeded"
 messageString (Success Copy)             = "Copied content to clipboard"
 messageString (Success Paste)            = "Clipboard content pasted"
-messageString (Error CreateFile)         = "File creation failed"
-messageString (Error CreateDirectory)    = "Directory creation failed"
-messageString (Error Remove)             = "Deletion failed"
-messageString (Error Rename)             = "Renaming failed"
-messageString (Error Copy)               = "Cannot copy content to clipboard"
-messageString (Error Paste)              = "Cannot paste clipboard content"
+
+messageString (Error command reason) =
+    mconcat
+        [ failedCommandMsg
+        , ": "
+        , failedReasonMsg
+        ]
+  where
+    failedCommandMsg =
+        case command of
+            CreateFile      -> "File creation failed"
+            CreateDirectory -> "Directory creation failed"
+            Remove          -> "Deletion failed"
+            Rename          -> "Renaming failed"
+            Copy            -> "Cannot copy content to clipboard"
+            Paste           -> "Cannot paste clipboard content"
+
+    failedReasonMsg =
+        case reason of
+            AlreadyExists name dir ->
+                mconcat
+                    [ name
+                    , " already exists in directory "
+                    , dir
+                    ]
+            DoesNotExist name ->
+                mconcat
+                    [ name
+                    , " does not exist"
+                    ]
+            InsufficientPermissions name ->
+                mconcat
+                    [ "insufficient permissions for"
+                    , name
+                    ]
+            InvalidName name ->
+                mconcat
+                    [ name
+                    , " is invalid"
+                    ]
+            Cancelled ->
+                "command was cancelled"
 
 data Message
     = Indicate
     | Success Command
-    | Error Command
+    | Error Command DirContentActionError
     deriving (Show, Eq)
 
 -- TODO: have field be a message to display, which can be an error or a regular message

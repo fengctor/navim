@@ -202,7 +202,7 @@ drawNavim ns =
                                 . to (case navigation ^. displayMessage of
                                          Indicate    -> id
                                          Success _   -> withAttr "success"
-                                         Error _     -> withAttr "error")
+                                         Error _ _   -> withAttr "error")
                 ColonMode colon ->
                     colon ^. colonInput
                            . to withBottomCursor
@@ -244,73 +244,64 @@ handleEvent ns e =
         VtyEvent vtye ->
             case vtye of
                 EvKey key@(KChar ':') [] ->
-                    bottomInputOr
-                        (continue $ ns & navimMode .~ ColonMode (Colon ":"))
-                        key
+                    givenCommandOrInput key $
+                        continue $ ns & navimMode
+                                      .~ ColonMode (Colon ":")
                 EvKey key@(KChar 'j') [] ->
-                    bottomInputOr
-                        (moveCursorWith nonEmptyCursorSelectNext ns)
-                        key
+                    givenCommandOrInput key $
+                        moveCursorWith nonEmptyCursorSelectNext ns
                 EvKey key@(KChar 'k') [] ->
-                    bottomInputOr
-                        (moveCursorWith nonEmptyCursorSelectPrev ns)
-                        key
+                    givenCommandOrInput key $
+                        moveCursorWith nonEmptyCursorSelectPrev ns
                 EvKey key@(KChar 'g') [] ->
-                    bottomInputOr
-                        (moveCursorWith (Just . nonEmptyCursorSelectFirst) ns)
-                        key
+                    givenCommandOrInput key $
+                        moveCursorWith (Just . nonEmptyCursorSelectFirst) ns
                 EvKey key@(KChar 'G') [] ->
-                    bottomInputOr
-                        (moveCursorWith (Just . nonEmptyCursorSelectLast) ns)
-                        key
+                    givenCommandOrInput key $
+                        moveCursorWith (Just . nonEmptyCursorSelectLast) ns
                 EvKey key@(KChar 'n') [] ->
-                    bottomInputOr
-                        (continue $ toInputMode CreateFile ns)
-                        key
+                    givenCommandOrInput key $
+                        continue $ toInputMode CreateFile ns
                 EvKey key@(KChar 'N') [] ->
-                    bottomInputOr
-                        (continue $ toInputMode CreateDirectory ns)
-                        key
+                    givenCommandOrInput key $
+                        continue $ toInputMode CreateDirectory ns
                 EvKey key@(KChar 'd') [] ->
-                    bottomInputOr
-                        (continue $
+                    givenCommandOrInput key $
+                        continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
                                 Directory "." ->
                                     ns & navimMode
                                        . _NavigationMode . displayMessage
-                                       .~ Error Remove
+                                       .~ Error Remove (InvalidName ".")
                                 Directory ".." ->
                                     ns & navimMode
                                        . _NavigationMode . displayMessage
-                                       .~ Error Remove
+                                       .~ Error Remove (InvalidName "..")
                                 _ -> toInputMode Remove ns
-                        )
-                        key
                 EvKey key@(KChar 'r') [] ->
-                    bottomInputOr
-                        (continue $
+                    givenCommandOrInput key $
+                        continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
                                 Directory "." ->
                                     ns & navimMode
                                        . _NavigationMode . displayMessage
-                                       .~ Error Rename
+                                       .~ Error Rename (InvalidName ".")
                                 Directory ".." ->
                                     ns & navimMode
                                        . _NavigationMode . displayMessage
-                                       .~ Error Rename
+                                       .~ Error Rename (InvalidName ".")
                                 _ -> toInputMode Rename ns
-                        )
-                        key
                 EvKey key@(KChar 'y') [] -> -- TODO: do nothing on Directory for now
-                    bottomInputOr
-                        (continue $
+                    givenCommandOrInput key $
+                        continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
-                                Directory _ -> ns & navimMode
-                                                  . _NavigationMode . displayMessage
-                                                  .~ Error Copy
+                                Directory name ->
+                                    ns & navimMode
+                                       . _NavigationMode . displayMessage
+                                       .~ Error Copy (InvalidName name)
                                 File name ->
                                     ns & navimMode
                                        . _NavigationMode . displayMessage
@@ -326,26 +317,25 @@ handleEvent ns e =
                                                     . ((ns ^. navimStatePaths
                                                             . to (getPath
                                                                   . nonEmptyCursorCurrent)
-                                                       ) :)) -- :)
-                        )
-                        key
+                                                       ) :)  -- :)
+                                                   )
                 EvKey key@(KChar 'p') [] ->
-                    bottomInputOr
-                        (continue $ toInputMode Paste ns)
-                        key
+                    givenCommandOrInput key $
+                        continue $
+                            case ns ^. navimClipboard of
+                                Nothing -> ns
+                                _       -> toInputMode Paste ns
                 EvKey key@(KChar 'v') [] ->
-                    bottomInputOr
-                        (suspendAndResume $
+                    givenCommandOrInput key $
+                        suspendAndResume $
                             ns <$
                             callProcess
                                 "vim"
                                  [ns ^. navimStatePaths
                                       . to (getPath . nonEmptyCursorCurrent)]
-                        )
-                        key
 
                 EvKey key@(KChar _) [] ->
-                    bottomInputOr (continue ns) key
+                    givenCommandOrInput key $ continue ns
 
                 EvKey (KChar 'd') [MCtrl] ->
                     halt ns
@@ -353,8 +343,8 @@ handleEvent ns e =
                 EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext ns
                 EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev ns
 
-                EvKey KBS    [] -> bottomInputOr (continue ns) KBS
-                EvKey KEnter [] -> bottomInputOr (previewOrNavigate ns) KEnter
+                EvKey KBS    [] -> givenCommandOrInput KBS (continue ns)
+                EvKey KEnter [] -> givenCommandOrInput KEnter (previewOrNavigate ns)
                 EvKey KEsc   [] -> continue $ ns & navimMode .~ NavigationMode (Navigation Indicate)
                 _ -> continue ns
         _ -> continue ns
@@ -364,8 +354,8 @@ handleEvent ns e =
 
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-    bottomInputOr :: EventM n (Next NavimState) -> Key -> EventM n (Next NavimState)
-    bottomInputOr navAction key =
+    givenCommandOrInput :: Key -> EventM n (Next NavimState) -> EventM n (Next NavimState)
+    givenCommandOrInput key navAction =
         case (ns ^. navimMode, key) of
             (NavigationMode _, _) -> navAction
 
@@ -397,41 +387,8 @@ handleEvent ns e =
                     ns & navimMode . _InputMode . inputResponse
                        %~ safeInit
             (InputMode input, KEnter) ->
-                case input ^. command of
-                    Remove ->
-                        case ns ^. navimStatePaths
-                                 . to nonEmptyCursorCurrent of
-                            -- TODO: better error message pls
-                            Directory "." ->
-                                continue $
-                                    ns & navimMode
-                                       .~ NavigationMode
-                                              (Navigation $ Error Remove)
-                            Directory ".." ->
-                                continue $
-                                    ns & navimMode
-                                       .~ NavigationMode
-                                              (Navigation $ Error Remove)
-                            _ ->
-                                performInputCommand Remove
-                    Rename ->
-                        case ns ^. navimStatePaths
-                                 . to nonEmptyCursorCurrent of
-                            -- TODO: better error message pls
-                            Directory "." ->
-                                continue $
-                                    ns & navimMode
-                                       .~ NavigationMode
-                                              (Navigation $ Error Rename)
-                            Directory ".." ->
-                                continue $
-                                    ns & navimMode
-                                       .~ NavigationMode
-                                              (Navigation $ Error Rename)
-                            _ ->
-                                performInputCommand Rename
-                    otherCommand ->
-                        performInputCommand otherCommand
+                input ^. command
+                       . to performInputCommand
             (InputMode _, _) ->
                 continue ns -- TODO!!!!!!!!
 
@@ -439,14 +396,15 @@ handleEvent ns e =
                 continue ns
 
     performInputCommand cmd = do
-        success <- liftIO . inputCommand $ ns
-        ns'     <- liftIO . buildState $ Just ns
+        dcResult <- liftIO . inputCommand $ ns
+        ns'      <- liftIO . buildState $ Just ns
         continue $
             ns' & navimMode
                 .~ NavigationMode
-                       (Navigation
-                        . (bool Error Success success)
-                        $ cmd)
+                       (Navigation $
+                        case dcResult of
+                            DCSuccess -> Success cmd
+                            DCError e -> Error cmd e)
 
 {- BEGIN Event Handler Helpers -}
 
@@ -515,7 +473,7 @@ colonCommand ns input =
                     .~ NavigationMode (Navigation Indicate)
 
 -- TODO: maybe having Command as a param is a better idea
-inputCommand :: NavimState -> IO Bool
+inputCommand :: NavimState -> IO DirContentActionResult
 inputCommand ns =
     case ns ^. navimMode of
         InputMode input ->
@@ -528,7 +486,7 @@ inputCommand ns =
                 Remove ->
                     case entered of
                         "y" -> onSelected removeDirContentSafe
-                        _   -> return False
+                        _   -> return $ DCError Cancelled
                 Rename ->
                     onSelected $ renameDirContentSafe entered
                 Paste ->
@@ -544,8 +502,8 @@ inputCommand ns =
                                            . (clipName :)))
                                 clip
                         _ ->
-                            return False
-        _ -> return False -- TODO: kind of a silent error
+                            return $ DCError Cancelled
+        _ -> return $ DCError Cancelled -- TODO: kind of a silent error
  where
     onSelected = ($ nonEmptyCursorCurrent (ns ^. navimStatePaths))
 
