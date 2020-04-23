@@ -41,7 +41,7 @@ navim = do
     initState <- buildState Nothing
     endState  <- defaultMain navimApp initState
     let navPath = endState ^. navimHistory
-                            . to (mconcat . intersperse "/" . reverse)
+                            . to (('/':) . mconcat . intersperse "/" . reverse)
     putStrLn navPath
 
 data ResourceName
@@ -503,6 +503,13 @@ colonCommand ns input =
     case input of
         ":q" -> halt ns
         -- TODO: other meta commands
+        ':':'r':'u':'n':' ':cmd ->
+            suspendAndResume $
+                callCommand cmd
+                >> (buildState . Just $
+                       ns & navimMode
+                          .~ NavigationMode (Navigation Indicate))
+
         _ -> continue $
                  ns & navimMode
                     .~ NavigationMode (Navigation Indicate)
