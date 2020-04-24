@@ -145,7 +145,7 @@ drawNavim ns =
 
     pathsCursor = ns ^. navimStatePaths
 
-    statusBar = str $
+    statusBar = strWrapDefault $
         case ns ^. navimMode of
             InputMode input ->
                 case input ^. command of
@@ -200,7 +200,6 @@ drawNavim ns =
     inputBar =
         padRight Max $
             case ns ^. navimMode of
-                -- TODO: if NavigationMode Navigation with an error, display error
                 NavigationMode navigation ->
                     navigation ^. displayMessage
                                 . to (str . messageString)
