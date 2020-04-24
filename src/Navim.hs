@@ -122,7 +122,13 @@ drawNavim ns =
         . padRight Max
         . withAttr "header"
         . strWrapDefault
-        $ "navim - a (WIP) file manager written in Haskell by Gary Feng"
+        $ unlines
+            [ " ____ ____ ____ ____ ____ "
+            , "||n |||a |||v |||i |||m ||"
+            , "||__|||__|||__|||__|||__||"
+            , "|/__\\|/__\\|/__\\|/__\\|/__\\|"
+            , "A (WIP) file manager written in Haskell by Gary Feng"
+            ]
 
     pathsWidget =
         padRight Max
