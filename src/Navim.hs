@@ -333,32 +333,6 @@ handleEvent ns e =
                     givenCommandOrInput key $
                         liftIO (changeDirHistoryWith redoDirHistory ns)
                             >>= continue
-
-                    {-givenCommandOrInput key $
-                        do let newHistory = ns ^. navimHistory
-                                                . to redoDirHistory
-                           let newCurDir = newHistory ^. currentDirectory
-                           validDir <- liftIO $ doesDirectoryExist newCurDir
-                           if validDir
-                               then do
-                                   liftIO $
-                                       newHistory ^. currentDirectory
-                                                   . to setCurrentDirectory
-                                   ns' <- liftIO . buildState $ Just ns
-                                   continue $
-                                       ns' & navimHistory
-                                           .~ newHistory
-                               else
-                                   continue $       -- todo: handle differently
-                                       ns & navimHistory
-                                          . undoDirectories
-                                          .~ []
-                                          & navimHistory
-                                          . redoDirectories
-                                          .~ []
-
-
--}
                 EvKey key@(KChar _) [] ->
                     givenCommandOrInput key $ continue ns
 
