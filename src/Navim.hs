@@ -310,7 +310,7 @@ handleEvent ns e =
                                                . currentDirectory
                                                . to (Just
                                                     . File
-                                                    . (++ name)))
+                                                    . (++ '/':name)))
                 EvKey key@(KChar 'p') [] ->
                     givenCommandOrInput key $
                         continue $
@@ -325,7 +325,40 @@ handleEvent ns e =
                                 "vim"
                                  [ns ^. navimStatePaths
                                       . to (getPath . nonEmptyCursorCurrent)]
+                EvKey key@(KChar 'u') [] ->
+                    givenCommandOrInput key $
+                        liftIO (changeDirHistoryWith undoDirHistory ns)
+                            >>= continue
+                EvKey key@(KChar 'r') [MCtrl] ->
+                    givenCommandOrInput key $
+                        liftIO (changeDirHistoryWith redoDirHistory ns)
+                            >>= continue
 
+                    {-givenCommandOrInput key $
+                        do let newHistory = ns ^. navimHistory
+                                                . to redoDirHistory
+                           let newCurDir = newHistory ^. currentDirectory
+                           validDir <- liftIO $ doesDirectoryExist newCurDir
+                           if validDir
+                               then do
+                                   liftIO $
+                                       newHistory ^. currentDirectory
+                                                   . to setCurrentDirectory
+                                   ns' <- liftIO . buildState $ Just ns
+                                   continue $
+                                       ns' & navimHistory
+                                           .~ newHistory
+                               else
+                                   continue $       -- todo: handle differently
+                                       ns & navimHistory
+                                          . undoDirectories
+                                          .~ []
+                                          & navimHistory
+                                          . redoDirectories
+                                          .~ []
+
+
+-}
                 EvKey key@(KChar _) [] ->
                     givenCommandOrInput key $ continue ns
 
@@ -487,12 +520,36 @@ inputCommand ns =
                             let (clipName, _) = nameAndDirectory . getPath $ clip in
                             copyDirContentSafe
                                 (ns ^. navimHistory
-                                     . currentDirectory)
+                                     . currentDirectory
+                                     . to (++ '/':clipName))
                                 clip
                         _ ->
                             return $ DCError Cancelled
         _ -> return $ DCError Cancelled -- TODO: kind of a silent error
  where
-    onSelected = ($ nonEmptyCursorCurrent (ns ^. navimStatePaths))
+    onSelected f = ns ^. navimStatePaths
+                       . to (f . nonEmptyCursorCurrent)
+
+changeDirHistoryWith :: (DirHistory -> DirHistory) -> NavimState -> IO NavimState
+changeDirHistoryWith changeFn ns = do
+    let newHistory = ns ^. navimHistory
+                         . to changeFn
+    let newCurDir = newHistory ^. currentDirectory
+    validDir <- doesDirectoryExist newCurDir
+    if validDir
+        then do
+            setCurrentDirectory newCurDir
+            ns' <- buildState $ Just ns
+            return $
+                ns' & navimHistory
+                    .~ newHistory
+        else
+            return $       -- todo: handle differently
+                ns & navimHistory
+                   . undoDirectories
+                   .~ []
+                   & navimHistory
+                   . redoDirectories
+                   .~ []
 
 {- END Event Handler Helpers -}

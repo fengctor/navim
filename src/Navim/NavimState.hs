@@ -124,11 +124,8 @@ redoDirHistory dh =
         (DirHistory _ _ [])      -> dh
         (DirHistory us c (r:rs)) -> DirHistory (c:us) r rs
 
--- Does nothing if the "new" directory is the same as before
 withNewCurrentDir :: FilePath -> DirHistory -> DirHistory
-withNewCurrentDir fp (DirHistory []     c _) = DirHistory [c] fp []
-withNewCurrentDir fp (DirHistory (u:us) c rs)
-    | otherwise = DirHistory (c:u:us) fp []
+withNewCurrentDir fp (DirHistory us c rs) = DirHistory (c:us) fp []
 
 data NavimState = NavimState
     { _navimStatePaths :: NonEmptyCursor DirContent
