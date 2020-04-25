@@ -132,5 +132,6 @@ data NavimState = NavimState
     , _navimHistory :: DirHistory
     , _navimMode :: Mode
     , _navimClipboard :: Maybe DirContent
+    , _navimWidth :: Int
     } deriving (Show, Eq)
 makeLenses ''NavimState

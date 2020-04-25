@@ -12,6 +12,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe
 import Data.Traversable
+import Data.Tuple
 
 import Control.Lens
 import Control.Monad
@@ -89,6 +90,7 @@ buildState prevState = do
                         , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
                         , _navimClipboard = Nothing
+                        , _navimWidth = 1
                         }
                 Just ps ->
                     return $
@@ -114,7 +116,7 @@ drawNavim ns =
       <=>
       statusBar
       <=>
-      inputBar
+      reportExtent InputBar inputBar
     ]
   where
     header =
@@ -209,9 +211,11 @@ drawNavim ns =
                                          Error _ _   -> withAttr "error")
                 ColonMode colon ->
                     colon ^. colonInput
+                           . to (++ ['_'])
                            . to withBottomCursor
                 InputMode input ->
                         input ^. inputResponse
+                               . to (++ ['_'])
                                . to (inputCommandText (input ^. command) ++)
                                . to withBottomCursor
 
@@ -222,10 +226,14 @@ drawNavim ns =
     inputCommandText Copy            = "Should never use this... TODO"
     inputCommandText Paste           = "Confirm (y/n): "
 
+    -- input has '_' appended to the end...
+    -- this is a hack
+    -- TODO: figure out how to get cursor to take up the next line
+    --       when input is at the end of a line
     withBottomCursor input =
         showCursor
             InputBar
-            (Location (textWidth input, 0)) -- TODO: save screen width in NavimState and mod this by it
+            (Location . swap $ (textWidth input - 1) `divMod` (ns ^. navimWidth))
             (strWrapDefault input)
 
 drawDirContent :: Bool -> DirContent -> Widget n
@@ -242,35 +250,43 @@ drawDirContent selected dc =
               Directory _ -> "dir"
 
 -- Event Handler
-handleEvent :: NavimState -> BrickEvent n e -> EventM n (Next NavimState)
-handleEvent ns e =
+handleEvent :: NavimState
+            -> BrickEvent ResourceName e
+            -> EventM ResourceName (Next NavimState)
+handleEvent s e = do
+    mExtent <- lookupExtent InputBar
+    let ns = case mExtent of
+                 Nothing -> s
+                 Just (Extent _ _ (width, _) _) ->
+                     s & navimWidth
+                       .~ width
     case e of
         VtyEvent vtye ->
             case vtye of
                 EvKey key@(KChar ':') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $ ns & navimMode
                                       .~ ColonMode (Colon ":")
                 EvKey key@(KChar 'j') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         moveCursorWith nonEmptyCursorSelectNext ns
                 EvKey key@(KChar 'k') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         moveCursorWith nonEmptyCursorSelectPrev ns
                 EvKey key@(KChar 'g') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         moveCursorWith (Just . nonEmptyCursorSelectFirst) ns
                 EvKey key@(KChar 'G') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         moveCursorWith (Just . nonEmptyCursorSelectLast) ns
                 EvKey key@(KChar 'n') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $ toInputMode CreateFile ns
                 EvKey key@(KChar 'N') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $ toInputMode CreateDirectory ns
                 EvKey key@(KChar 'd') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
@@ -284,7 +300,7 @@ handleEvent ns e =
                                        .~ Error Remove (InvalidName "..")
                                 _ -> toInputMode Remove ns
                 EvKey key@(KChar 'r') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
@@ -298,7 +314,7 @@ handleEvent ns e =
                                        .~ Error Rename (InvalidName ".")
                                 _ -> toInputMode Rename ns
                 EvKey key@(KChar 'y') [] -> -- TODO: do nothing on Directory for now
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $
                             case ns ^. navimStatePaths
                                      . to nonEmptyCursorCurrent of
@@ -317,13 +333,13 @@ handleEvent ns e =
                                                     . File
                                                     . (++ '/':name)))
                 EvKey key@(KChar 'p') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         continue $
                             case ns ^. navimClipboard of
                                 Nothing -> ns
                                 _       -> toInputMode Paste ns
                 EvKey key@(KChar 'v') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         suspendAndResume $
                             ns <$
                             callProcess
@@ -331,15 +347,15 @@ handleEvent ns e =
                                  [ns ^. navimStatePaths
                                       . to (getPath . nonEmptyCursorCurrent)]
                 EvKey key@(KChar 'u') [] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         liftIO (changeDirHistoryWith undoDirHistory ns)
                             >>= continue
                 EvKey key@(KChar 'r') [MCtrl] ->
-                    givenCommandOrInput key $
+                    givenCommandOrInput ns key $
                         liftIO (changeDirHistoryWith redoDirHistory ns)
                             >>= continue
                 EvKey key@(KChar _) [] ->
-                    givenCommandOrInput key $ continue ns
+                    givenCommandOrInput ns key $ continue ns
 
                 EvKey (KChar 'd') [MCtrl] ->
                     halt ns
@@ -347,8 +363,8 @@ handleEvent ns e =
                 EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext ns
                 EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev ns
 
-                EvKey KBS    [] -> givenCommandOrInput KBS (continue ns)
-                EvKey KEnter [] -> givenCommandOrInput KEnter (previewOrNavigate ns)
+                EvKey KBS    [] -> givenCommandOrInput ns KBS (continue ns)
+                EvKey KEnter [] -> givenCommandOrInput ns KEnter (previewOrNavigate ns)
                 EvKey KEsc   [] -> continue $ ns & navimMode .~ NavigationMode (Navigation Indicate)
                 _ -> continue ns
         _ -> continue ns
@@ -358,8 +374,8 @@ handleEvent ns e =
 
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-    givenCommandOrInput :: Key -> EventM n (Next NavimState) -> EventM n (Next NavimState)
-    givenCommandOrInput key navAction =
+    givenCommandOrInput :: NavimState -> Key -> EventM n (Next NavimState) -> EventM n (Next NavimState)
+    givenCommandOrInput ns key navAction =
         case (ns ^. navimMode, key) of
             (NavigationMode _, _) -> navAction
 
@@ -392,14 +408,14 @@ handleEvent ns e =
                        %~ safeInit
             (InputMode input, KEnter) ->
                 input ^. command
-                       . to performInputCommand
+                       . to (performInputCommand ns)
             (InputMode _, _) ->
                 continue ns -- TODO!!!!!!!!
 
             (_, _) ->
                 continue ns
 
-    performInputCommand cmd = do
+    performInputCommand ns cmd = do
         dcResult <- liftIO . inputCommand $ ns
         ns'      <- liftIO . buildState $ Just ns
         continue $
