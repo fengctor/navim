@@ -27,6 +27,7 @@ dependencies:
 - lens
 - word-wrap
 - process
+- containers
 
 library:
   source-dirs: src

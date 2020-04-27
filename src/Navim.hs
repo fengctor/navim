@@ -10,6 +10,8 @@ import Data.Bool
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Traversable
 import Data.Tuple
@@ -34,6 +36,118 @@ import Text.Wrap
 
 import Navim.DirContent
 import Navim.NavimState
+
+commandMap :: Map (Key, [Modifier]) (NavimState -> EventM ResourceName (Next NavimState))
+commandMap = Map.fromList
+    [ ( (KChar ':', [])
+      , enterColonMode
+      )
+    , ( (KChar 'j', [])
+      , moveCursorWith nonEmptyCursorSelectNext
+      )
+    , ( (KChar 'k', [])
+      , moveCursorWith nonEmptyCursorSelectPrev
+      )
+    , ( (KChar 'g', [])
+      , moveCursorWith (Just . nonEmptyCursorSelectFirst)
+      )
+    , ( (KChar 'G', [])
+      , moveCursorWith (Just . nonEmptyCursorSelectLast)
+      )
+    , ( (KChar 'n', [])
+      , continue . (toInputMode CreateFile)
+      )
+    , ( (KChar 'N', [])
+      , continue . (toInputMode CreateDirectory)
+      )
+    , ( (KChar 'd', [])
+      , attemptModifySelectedWith Remove
+      )
+    , ( (KChar 'r', [])
+      , attemptModifySelectedWith Rename
+      )
+    , ( (KChar 'y', [])
+      , copySelected
+      )
+    , ( (KChar 'p', [])
+      , pasteClipboard
+      )
+    , ( (KChar 'v', [])
+      , vimOnSelected
+      )
+    , ( (KChar 'u', [])
+      , (>>= continue) . liftIO . (changeDirHistoryWith undoDirHistory)
+      )
+    , ( (KChar 'r', [MCtrl])
+      , (>>= continue) . liftIO . (changeDirHistoryWith redoDirHistory)
+      )
+    , ( (KChar 'd', [MCtrl])
+      , halt
+      )
+    , ( (KDown, [])
+      , moveCursorWith nonEmptyCursorSelectNext
+      )
+    , ( (KUp, [])
+      , moveCursorWith nonEmptyCursorSelectPrev
+      )
+    , ( (KEnter, [])
+      , previewOrNavigate
+      )
+    ]
+  where
+    enterColonMode ns =
+        continue $
+            ns & navimMode
+               .~ ColonMode (Colon ":")
+
+    toInputMode cmd = navimMode .~ InputMode (Input cmd "")
+
+    attemptModifySelectedWith cmd ns =
+        continue $
+            case ns ^. navimStatePaths
+                     . to nonEmptyCursorCurrent of
+                Directory "." ->
+                    ns & navimMode
+                       . _NavigationMode . displayMessage
+                       .~ Error cmd (InvalidName ".")
+                Directory ".." ->
+                    ns & navimMode
+                       . _NavigationMode . displayMessage
+                       .~ Error cmd (InvalidName "..")
+                _ -> toInputMode cmd ns
+
+    copySelected ns =
+        continue $
+            case ns ^. navimStatePaths
+                     . to nonEmptyCursorCurrent of
+                Directory name ->
+                    ns & navimMode
+                       . _NavigationMode . displayMessage
+                       .~ Error Copy (InvalidName name)
+                File name ->
+                    ns & navimMode
+                       . _NavigationMode . displayMessage
+                       .~ Success Copy
+                       & navimClipboard
+                       .~ (ns ^. navimHistory
+                               . currentDirectory
+                               . to (Just
+                                    . File
+                                    . (++ '/':name)))
+
+    pasteClipboard ns =
+        continue $
+            case ns ^. navimClipboard of
+                Nothing -> ns
+                _       -> toInputMode Paste ns
+
+    vimOnSelected ns =
+        suspendAndResume $
+            ns <$
+            callProcess
+                "vim"
+                 [ns ^. navimStatePaths
+                      . to (getPath . nonEmptyCursorCurrent)]
 
 -- Main
 navim :: IO ()
@@ -264,109 +378,18 @@ handleEvent s e = do
     case e of
         VtyEvent vtye ->
             case vtye of
-                EvKey key@(KChar ':') [] ->
-                    givenCommandOrInput ns key $
-                        continue $ ns & navimMode
-                                      .~ ColonMode (Colon ":")
-                EvKey key@(KChar 'j') [] ->
-                    givenCommandOrInput ns key $
-                        moveCursorWith nonEmptyCursorSelectNext ns
-                EvKey key@(KChar 'k') [] ->
-                    givenCommandOrInput ns key $
-                        moveCursorWith nonEmptyCursorSelectPrev ns
-                EvKey key@(KChar 'g') [] ->
-                    givenCommandOrInput ns key $
-                        moveCursorWith (Just . nonEmptyCursorSelectFirst) ns
-                EvKey key@(KChar 'G') [] ->
-                    givenCommandOrInput ns key $
-                        moveCursorWith (Just . nonEmptyCursorSelectLast) ns
-                EvKey key@(KChar 'n') [] ->
-                    givenCommandOrInput ns key $
-                        continue $ toInputMode CreateFile ns
-                EvKey key@(KChar 'N') [] ->
-                    givenCommandOrInput ns key $
-                        continue $ toInputMode CreateDirectory ns
-                EvKey key@(KChar 'd') [] ->
-                    givenCommandOrInput ns key $
-                        continue $
-                            case ns ^. navimStatePaths
-                                     . to nonEmptyCursorCurrent of
-                                Directory "." ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Error Remove (InvalidName ".")
-                                Directory ".." ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Error Remove (InvalidName "..")
-                                _ -> toInputMode Remove ns
-                EvKey key@(KChar 'r') [] ->
-                    givenCommandOrInput ns key $
-                        continue $
-                            case ns ^. navimStatePaths
-                                     . to nonEmptyCursorCurrent of
-                                Directory "." ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Error Rename (InvalidName ".")
-                                Directory ".." ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Error Rename (InvalidName ".")
-                                _ -> toInputMode Rename ns
-                EvKey key@(KChar 'y') [] -> -- TODO: do nothing on Directory for now
-                    givenCommandOrInput ns key $
-                        continue $
-                            case ns ^. navimStatePaths
-                                     . to nonEmptyCursorCurrent of
-                                Directory name ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Error Copy (InvalidName name)
-                                File name ->
-                                    ns & navimMode
-                                       . _NavigationMode . displayMessage
-                                       .~ Success Copy
-                                       & navimClipboard
-                                       .~ (ns ^. navimHistory
-                                               . currentDirectory
-                                               . to (Just
-                                                    . File
-                                                    . (++ '/':name)))
-                EvKey key@(KChar 'p') [] ->
-                    givenCommandOrInput ns key $
-                        continue $
-                            case ns ^. navimClipboard of
-                                Nothing -> ns
-                                _       -> toInputMode Paste ns
-                EvKey key@(KChar 'v') [] ->
-                    givenCommandOrInput ns key $
-                        suspendAndResume $
-                            ns <$
-                            callProcess
-                                "vim"
-                                 [ns ^. navimStatePaths
-                                      . to (getPath . nonEmptyCursorCurrent)]
-                EvKey key@(KChar 'u') [] ->
-                    givenCommandOrInput ns key $
-                        liftIO (changeDirHistoryWith undoDirHistory ns)
-                            >>= continue
-                EvKey key@(KChar 'r') [MCtrl] ->
-                    givenCommandOrInput ns key $
-                        liftIO (changeDirHistoryWith redoDirHistory ns)
-                            >>= continue
-                EvKey key@(KChar _) [] ->
-                    givenCommandOrInput ns key $ continue ns
+                EvKey KEsc [] ->
+                    continue $
+                        ns & navimMode
+                           .~ NavigationMode (Navigation Indicate)
 
-                EvKey (KChar 'd') [MCtrl] ->
-                    halt ns
+                EvKey key modifier ->
+                    givenCommandOrInput ns key $
+                        fromMaybe
+                            continue
+                            (Map.lookup (key, modifier) commandMap)
+                        ns
 
-                EvKey KDown [] -> moveCursorWith nonEmptyCursorSelectNext ns
-                EvKey KUp   [] -> moveCursorWith nonEmptyCursorSelectPrev ns
-
-                EvKey KBS    [] -> givenCommandOrInput ns KBS (continue ns)
-                EvKey KEnter [] -> givenCommandOrInput ns KEnter (previewOrNavigate ns)
-                EvKey KEsc   [] -> continue $ ns & navimMode .~ NavigationMode (Navigation Indicate)
                 _ -> continue ns
         _ -> continue ns
   where
