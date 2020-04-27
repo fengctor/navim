@@ -27,7 +27,8 @@ dependencies:
 - lens
 - word-wrap
 - process
-- containers
+- hashmap
+- hashable
 
 library:
   source-dirs: src

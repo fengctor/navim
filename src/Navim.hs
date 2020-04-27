@@ -10,8 +10,8 @@ import Data.Bool
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.HashMap (Map)
+import qualified Data.HashMap as Map
 import Data.Maybe
 import Data.Traversable
 import Data.Tuple
@@ -35,9 +35,12 @@ import Graphics.Vty.Input.Events
 import Text.Wrap
 
 import Navim.DirContent
+import Navim.Instances.Hashable
 import Navim.NavimState
 
-commandMap :: Map (Key, [Modifier]) (NavimState -> EventM ResourceName (Next NavimState))
+commandMap :: Map
+    (Key, [Modifier])
+    (NavimState -> EventM ResourceName (Next NavimState))
 commandMap = Map.fromList
     [ ( (KChar ':', [])
       , enterColonMode
