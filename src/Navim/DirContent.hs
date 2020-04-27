@@ -64,9 +64,9 @@ createDirContentSafe dc = do
     let (dcName, dcDir) = nameAndDirectory $ fromRelativePath curDir path
     dcDirContents <- getDirectoryContents dcDir
     if null dcName
-        then return $ DCError $ InvalidName dcName
+        then pure $ DCError (InvalidName dcName)
         else if dcName `elem` dcDirContents
-            then return $ DCError $ AlreadyExists dcName dcDir
+            then pure $ DCError (AlreadyExists dcName dcDir)
             else DCSuccess
                  <$ case dc of
                         File      name -> writeFile name ""
@@ -79,9 +79,9 @@ renameDirContentSafe newPath dc = do
     let (newPathName, newPathDir) = nameAndDirectory $ fromRelativePath curDir newPath
     newPathDirContents <- getDirectoryContents newPathDir
     if null newPathName
-        then return $ DCError $ InvalidName newPathName
+        then pure $ DCError (InvalidName newPathName)
         else if newPathName `elem` newPathDirContents
-            then return $ DCError $ AlreadyExists newPathName newPathDir
+            then pure $ DCError (AlreadyExists newPathName newPathDir)
             else DCSuccess <$ renamePath (getPath dc) newPath
 
 -- dest: absolute path to destination
@@ -93,22 +93,15 @@ copyDirContentSafe dest (File name) = do
     -- TODO: check destDir is a directory
     destDirContents <- getDirectoryContents destDir
     if null destName
-        then return $ DCError $ InvalidName destName
+        then pure $ DCError (InvalidName destName)
         else if destName `elem` destDirContents
-            then return $ DCError $ AlreadyExists destName destDir
+            then pure $ DCError (AlreadyExists destName destDir)
             else DCSuccess <$ copyFile name dest
 
 -- TODO: may fail based on permissions
 removeDirContentSafe :: DirContent -> IO DirContentActionResult
 removeDirContentSafe (File name)      = DCSuccess <$ removeFile name
 removeDirContentSafe (Directory name) = DCSuccess <$ removeDirectoryRecursive name
-
-{-getCurrentDirContents :: IO [DirContent]
-getCurrentDirContents = do
-    curdir      <- getCurrentDirectory
-    rawContents <- getDirectoryContents curdir
-    for rawContents $ \fp ->
-        bool (Directory fp) (File fp) <$> doesFileExist fp-}
 
 getDirContents :: FilePath -> IO [DirContent]
 getDirContents dir = do

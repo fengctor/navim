@@ -23,7 +23,6 @@ import Brick.Main
 import Brick.Types
 import Brick.Util
 import Brick.Widgets.Border
-import Brick.Widgets.Border.Style
 import Brick.Widgets.Core
 
 import Cursor.Simple.List.NonEmpty
@@ -85,7 +84,7 @@ buildState prevState = do
         Just ne ->
             case prevState of
                 Nothing ->
-                    return NavimState
+                    pure NavimState
                         { _navimStatePaths = makeNonEmptyCursor ne
                         , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
@@ -93,7 +92,7 @@ buildState prevState = do
                         , _navimWidth = 1
                         }
                 Just ps ->
-                    return $
+                    pure $
                         ps & navimStatePaths
                            %~ adjustCursor (makeNonEmptyCursor ne)
   where
@@ -110,9 +109,15 @@ buildState prevState = do
 drawNavim :: NavimState -> [Widget ResourceName]
 drawNavim ns =
     [
+      hBorder
+      <=>
       header
       <=>
+      hBorder
+      <=>
       padBottom Max pathsWidget
+      <=>
+      hBorder
       <=>
       statusBar
       <=>
@@ -120,8 +125,7 @@ drawNavim ns =
     ]
   where
     header =
-        border
-        . padRight Max
+        padRight Max
         . withAttr "header"
         . strWrapDefault
         $ unlines
@@ -238,16 +242,13 @@ drawNavim ns =
 
 drawDirContent :: Bool -> DirContent -> Widget n
 drawDirContent selected dc =
-    decorate
-    . strWrapDefault
-    . getPath $ dc
+    decorate . strWrapDefault . getPath $ dc
   where
     decorate =
-        withAttr
-        . bool id (<> "selected") selected
-        $ case dc of
-              File      _ -> "file"
-              Directory _ -> "dir"
+        withAttr . bool id (<> "selected") selected $
+            case dc of
+                File      _ -> "file"
+                Directory _ -> "dir"
 
 -- Event Handler
 handleEvent :: NavimState
@@ -421,8 +422,7 @@ handleEvent s e = do
         continue $
             ns' & navimMode
                 .~ NavigationMode
-                       (Navigation $
-                        case dcResult of
+                       (Navigation $ case dcResult of
                             DCSuccess -> Success cmd
                             DCError e -> Error cmd e)
 
@@ -460,10 +460,9 @@ previewOrNavigate ns =
             let nextFocus = if fp == ".." then curDir else "."
             liftIO $ setCurrentDirectory fp
             newCurDir <- liftIO getCurrentDirectory
-            ns'       <- liftIO . buildState $
-                             Just $
-                                 ns & navimStatePaths
-                                    %~ nonEmptyCursorReset
+            ns'       <- liftIO . buildState . Just $
+                             ns & navimStatePaths
+                                %~ nonEmptyCursorReset
             continue $
                 ns' & navimMode . _NavigationMode . displayMessage
                     .~ Indicate
@@ -506,7 +505,7 @@ inputCommand ns =
                 Remove ->
                     case entered of
                         "y" -> onSelected removeDirContentSafe
-                        _   -> return $ DCError Cancelled
+                        _   -> pure $ DCError Cancelled
                 Rename ->
                     onSelected $ renameDirContentSafe entered
                 Paste ->
@@ -519,8 +518,8 @@ inputCommand ns =
                                      . to (++ '/':clipName))
                                 clip
                         _ ->
-                            return $ DCError Cancelled
-        _ -> return $ DCError Cancelled -- TODO: kind of a silent error
+                            pure $ DCError Cancelled
+        _ -> pure $ DCError Cancelled -- TODO: kind of a silent error
  where
     onSelected f = ns ^. navimStatePaths
                        . to (f . nonEmptyCursorCurrent)
@@ -532,14 +531,11 @@ changeDirHistoryWith changeFn ns = do
     let newCurDir = newHistory ^. currentDirectory
     validDir <- doesDirectoryExist newCurDir
     if validDir
-        then do
-            setCurrentDirectory newCurDir
-            ns' <- buildState $ Just ns
-            return $
-                ns' & navimHistory
-                    .~ newHistory
+        then
+            setCurrentDirectory newCurDir *>
+            ((navimHistory .~ newHistory) <$> buildState (Just ns))
         else
-            return $       -- todo: handle differently
+            pure $       -- todo: handle differently
                 ns & navimHistory
                    . undoDirectories
                    .~ []
