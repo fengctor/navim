@@ -1,6 +1,7 @@
 module Main where
 
 import Navim
+import Navim.NavimState
 
 main :: IO ()
-main = navim
+main = navim (NavimConfig defaultCommandMap)

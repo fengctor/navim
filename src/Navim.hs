@@ -38,10 +38,12 @@ import Navim.DirContent
 import Navim.Instances.Hashable
 import Navim.NavimState
 
-commandMap :: Map
+type NavimStateRN = NavimState ResourceName
+
+defaultCommandMap :: Map
     (Key, [Modifier])
-    (NavimState -> EventM ResourceName (Next NavimState))
-commandMap = Map.fromList
+    (NavimStateRN -> EventM ResourceName (Next NavimStateRN))
+defaultCommandMap = Map.fromList
     [ ( (KChar ':', [])
       , enterColonMode
       )
@@ -86,15 +88,6 @@ commandMap = Map.fromList
       )
     , ( (KChar 'd', [MCtrl])
       , halt
-      )
-    , ( (KDown, [])
-      , moveCursorWith nonEmptyCursorSelectNext
-      )
-    , ( (KUp, [])
-      , moveCursorWith nonEmptyCursorSelectPrev
-      )
-    , ( (KEnter, [])
-      , previewOrNavigate
       )
     ]
   where
@@ -153,10 +146,12 @@ commandMap = Map.fromList
                       . to (getPath . nonEmptyCursorCurrent)]
 
 -- Main
-navim :: IO ()
-navim = do
+navim :: NavimConfig ResourceName -> IO ()
+navim cfg = do
     initState <- buildState Nothing
-    endState  <- defaultMain navimApp initState
+    endState  <- defaultMain navimApp $
+                     initState & navimConfig
+                               .~ cfg
     let DirHistory _ cur _ = endState ^. navimHistory
     putStrLn cur
 
@@ -172,7 +167,7 @@ strWrapDefault :: String -> Widget n
 strWrapDefault = strWrapWith (WrapSettings False True)
 
 -- TUI App Components
-navimApp :: App NavimState e ResourceName
+navimApp :: App NavimStateRN e ResourceName
 navimApp = App
     { appDraw = drawNavim
     , appChooseCursor = showFirstCursor
@@ -192,7 +187,7 @@ navimApp = App
     }
 
 -- State Transformer (and I don't mean the monad ;))
-buildState :: Maybe NavimState -> IO NavimState
+buildState :: Maybe NavimStateRN -> IO NavimStateRN
 buildState prevState = do
     curDir   <- getCurrentDirectory
     contents <- getDirContents curDir
@@ -207,6 +202,7 @@ buildState prevState = do
                         , _navimMode = NavigationMode $ Navigation Indicate
                         , _navimClipboard = Nothing
                         , _navimWidth = 1
+                        , _navimConfig = NavimConfig $ Map.empty
                         }
                 Just ps ->
                     pure $
@@ -223,7 +219,7 @@ buildState prevState = do
             Just nec' -> moveNextBy (n - 1) nec'
 
 -- UI Drawer
-drawNavim :: NavimState -> [Widget ResourceName]
+drawNavim :: NavimStateRN -> [Widget ResourceName]
 drawNavim ns =
     [
       hBorder
@@ -368,9 +364,9 @@ drawDirContent selected dc =
                 Directory _ -> "dir"
 
 -- Event Handler
-handleEvent :: NavimState
+handleEvent :: NavimStateRN
             -> BrickEvent ResourceName e
-            -> EventM ResourceName (Next NavimState)
+            -> EventM ResourceName (Next NavimStateRN)
 handleEvent s e = do
     mExtent <- lookupExtent InputBar
     let ns = case mExtent of
@@ -381,6 +377,10 @@ handleEvent s e = do
     case e of
         VtyEvent vtye ->
             case vtye of
+                EvKey KEnter [] -> previewOrNavigate ns
+                EvKey KUp    [] -> moveCursorWith nonEmptyCursorSelectPrev ns
+                EvKey KDown  [] -> moveCursorWith nonEmptyCursorSelectNext ns
+
                 EvKey KEsc [] ->
                     continue $
                         ns & navimMode
@@ -390,7 +390,8 @@ handleEvent s e = do
                     givenCommandOrInput ns key $
                         fromMaybe
                             continue
-                            (Map.lookup (key, modifier) commandMap)
+                            (ns ^. navimConfig . commandMap
+                                 . to (Map.lookup (key, modifier)))
                         ns
 
                 _ -> continue ns
@@ -401,7 +402,10 @@ handleEvent s e = do
 
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-    givenCommandOrInput :: NavimState -> Key -> EventM n (Next NavimState) -> EventM n (Next NavimState)
+    givenCommandOrInput :: NavimStateRN
+                        -> Key
+                        -> EventM n (Next NavimStateRN)
+                        -> EventM n (Next NavimStateRN)
     givenCommandOrInput ns key navAction =
         case (ns ^. navimMode, key) of
             (NavigationMode _, _) -> navAction
@@ -456,8 +460,8 @@ handleEvent s e = do
 
 -- Note: clears the error message too
 moveCursorWith :: (NonEmptyCursor DirContent -> Maybe (NonEmptyCursor DirContent))
-               -> NavimState
-               -> EventM n (Next NavimState)
+               -> NavimStateRN
+               -> EventM n (Next NavimStateRN)
 moveCursorWith move ns =
     continue $
         case move $ ns ^. navimStatePaths of
@@ -468,7 +472,7 @@ moveCursorWith move ns =
                               & navimMode . _NavigationMode . displayMessage
                               .~ Indicate
 
-previewOrNavigate :: NavimState -> EventM n (Next NavimState)
+previewOrNavigate :: NavimStateRN -> EventM n (Next NavimStateRN)
 previewOrNavigate ns =
     case ns ^. navimStatePaths
              . to nonEmptyCursorCurrent of
@@ -501,7 +505,7 @@ previewOrNavigate ns =
                                   ((== nextFocus) . getPath)
                                   newPaths
 
-colonCommand :: NavimState -> String -> EventM n (Next NavimState)
+colonCommand :: NavimStateRN -> String -> EventM n (Next NavimStateRN)
 colonCommand ns input =
     case input of
         ":q" -> halt ns
@@ -518,7 +522,7 @@ colonCommand ns input =
                     .~ NavigationMode (Navigation Indicate)
 
 -- TODO: maybe having Command as a param is a better idea
-inputCommand :: NavimState -> IO DirContentActionResult
+inputCommand :: NavimStateRN -> IO DirContentActionResult
 inputCommand ns =
     case ns ^. navimMode of
         InputMode input ->
@@ -550,7 +554,7 @@ inputCommand ns =
     onSelected f = ns ^. navimStatePaths
                        . to (f . nonEmptyCursorCurrent)
 
-changeDirHistoryWith :: (DirHistory -> DirHistory) -> NavimState -> IO NavimState
+changeDirHistoryWith :: (DirHistory -> DirHistory) -> NavimStateRN -> IO NavimStateRN
 changeDirHistoryWith changeFn ns = do
     let newHistory = ns ^. navimHistory
                          . to changeFn

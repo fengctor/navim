@@ -8,6 +8,13 @@ import Control.Lens
 
 import Navim.DirContent
 
+import Data.HashMap (Map)
+import qualified Data.HashMap as Map
+
+import Brick.Types
+
+import Graphics.Vty.Input.Events
+
 data Command
     = CreateFile
     | CreateDirectory
@@ -127,11 +134,26 @@ redoDirHistory dh =
 withNewCurrentDir :: FilePath -> DirHistory -> DirHistory
 withNewCurrentDir fp (DirHistory us c rs) = DirHistory (c:us) fp []
 
-data NavimState = NavimState
-    { _navimStatePaths :: NonEmptyCursor DirContent
-    , _navimHistory :: DirHistory
-    , _navimMode :: Mode
-    , _navimClipboard :: Maybe DirContent
-    , _navimWidth :: Int
-    } deriving (Show, Eq)
+-- TODO: other fields
+data NavimConfig n
+    = NavimConfig
+        { _commandMap :: Map
+            (Key, [Modifier])
+            (NavimState n -> EventM n (Next (NavimState n)))
+        }
+
+instance Show (NavimConfig n) where
+    show nc = "CONFIG"
+
+data NavimState n
+    = NavimState
+        { _navimStatePaths :: NonEmptyCursor DirContent
+        , _navimHistory :: DirHistory
+        , _navimMode :: Mode
+        , _navimClipboard :: Maybe DirContent
+        , _navimWidth :: Int
+        , _navimConfig :: NavimConfig n
+        } deriving Show
+
+makeLenses ''NavimConfig
 makeLenses ''NavimState
