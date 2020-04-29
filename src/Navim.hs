@@ -7,6 +7,7 @@ import System.Exit
 import System.Process
 
 import Data.Bool
+import Data.Char
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
@@ -27,6 +28,7 @@ import Brick.Util
 import Brick.Widgets.Border
 import Brick.Widgets.Core
 
+import qualified Cursor.List.NonEmpty as NEC (NonEmptyCursor(..))
 import Cursor.Simple.List.NonEmpty
 
 import Graphics.Vty.Attributes
@@ -44,10 +46,7 @@ defaultCommandMap :: Map
     (Key, [Modifier])
     (NavimStateRN -> EventM ResourceName (Next NavimStateRN))
 defaultCommandMap = Map.fromList
-    [ ( (KChar ':', [])
-      , enterColonMode
-      )
-    , ( (KChar 'j', [])
+    [ ( (KChar 'j', [])
       , moveCursorWith nonEmptyCursorSelectNext
       )
     , ( (KChar 'k', [])
@@ -89,13 +88,11 @@ defaultCommandMap = Map.fromList
     , ( (KChar 'd', [MCtrl])
       , halt
       )
+    , ( (KChar 'f', [])
+      , performSearch
+      )
     ]
   where
-    enterColonMode ns =
-        continue $
-            ns & navimMode
-               .~ ColonMode (Colon ":")
-
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
     attemptModifySelectedWith cmd ns =
@@ -144,6 +141,28 @@ defaultCommandMap = Map.fromList
                 "vim"
                  [ns ^. navimStatePaths
                       . to (getPath . nonEmptyCursorCurrent)]
+
+    performSearch ns =
+        let nsSearch = ns ^. navimSearch
+                           . to (toLower <$>) in
+        continue $
+            ns & navimMode
+               . _NavigationMode . displayMessage
+               .~ case nsSearch of
+                      "" -> Indicate
+                      _  -> Neutral ('/' : nsSearch)
+               & navimStatePaths
+               %~ \paths ->
+                   case nsSearch of
+                       "" -> paths
+                       savedQuery ->
+                           fromMaybe paths $
+                               nonEmptyCursorCircularSearch
+                                   ((savedQuery `isPrefixOf`)
+                                    . (toLower <$>)
+                                    . getPath)
+                                   paths
+
 
 -- Main
 navim :: NavimConfig ResourceName -> IO ()
@@ -201,6 +220,7 @@ buildState prevState = do
                         , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
                         , _navimClipboard = Nothing
+                        , _navimSearch = ""
                         , _navimWidth = 1
                         , _navimConfig = NavimConfig $ Map.empty
                         }
@@ -324,12 +344,13 @@ drawNavim ns =
                                 . to (str . messageString)
                                 . to (case navigation ^. displayMessage of
                                          Indicate    -> id
+                                         Neutral _   -> id
                                          Success _   -> withAttr "success"
                                          Error _ _   -> withAttr "error")
-                ColonMode colon ->
-                    colon ^. colonInput
-                           . to (++ ['_'])
-                           . to withBottomCursor
+                MetaMode meta ->
+                    meta ^. metaInput
+                          . to (++ ['_'])
+                          . to withBottomCursor
                 InputMode input ->
                         input ^. inputResponse
                                . to (++ ['_'])
@@ -377,9 +398,24 @@ handleEvent s e = do
     case e of
         VtyEvent vtye ->
             case vtye of
-                EvKey KEnter [] -> previewOrNavigate ns
-                EvKey KUp    [] -> moveCursorWith nonEmptyCursorSelectPrev ns
-                EvKey KDown  [] -> moveCursorWith nonEmptyCursorSelectNext ns
+                EvKey KEnter [] -> dispatchKey ns KEnter $
+                                       previewOrNavigate ns
+                EvKey KUp    [] -> dispatchKey ns KEnter $
+                                       moveCursorWith nonEmptyCursorSelectPrev ns
+                EvKey KDown  [] -> dispatchKey ns KEnter $
+                                       moveCursorWith nonEmptyCursorSelectNext ns
+
+                EvKey key@(KChar ':') [] ->
+                    dispatchKey ns key $
+                        continue $
+                            ns & navimMode
+                               .~ MetaMode (Meta ":")
+
+                EvKey key@(KChar '/') [] ->
+                    dispatchKey ns key $
+                        continue $
+                            ns & navimMode
+                               .~ MetaMode (Meta "/")
 
                 EvKey KEsc [] ->
                     continue $
@@ -387,7 +423,7 @@ handleEvent s e = do
                            .~ NavigationMode (Navigation Indicate)
 
                 EvKey key modifier ->
-                    givenCommandOrInput ns key $
+                    dispatchKey ns key $
                         fromMaybe
                             continue
                             (ns ^. navimConfig . commandMap
@@ -402,32 +438,32 @@ handleEvent s e = do
 
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-    givenCommandOrInput :: NavimStateRN
-                        -> Key
-                        -> EventM n (Next NavimStateRN)
-                        -> EventM n (Next NavimStateRN)
-    givenCommandOrInput ns key navAction =
+    dispatchKey :: NavimStateRN
+                -> Key
+                -> EventM n (Next NavimStateRN)
+                -> EventM n (Next NavimStateRN)
+    dispatchKey ns key navAction =
         case (ns ^. navimMode, key) of
             (NavigationMode _, _) -> navAction
 
-            (ColonMode _, KChar c) ->
+            (MetaMode _, KChar c) ->
                 continue $
-                    ns & navimMode . _ColonMode . colonInput
+                    ns & navimMode . _MetaMode . metaInput
                        %~ (++ [c])
-            (ColonMode colon, KBS) ->
-                case colon ^. colonInput of
+            (MetaMode meta, KBS) ->
+                case meta ^. metaInput of
                     [] ->
-                        error "Programmer error: colon input should never be empty"
+                        error "Programmer error: meta input should never be empty"
                     [_] ->
                         continue $
                             ns & navimMode
                                .~ NavigationMode (Navigation Indicate)
                     cs ->
                         continue $
-                            ns & navimMode . _ColonMode . colonInput
+                            ns & navimMode . _MetaMode . metaInput
                                %~ safeInit
-            (ColonMode colon, KEnter) ->
-                colon ^. colonInput .to (colonCommand ns)
+            (MetaMode meta, KEnter) ->
+                meta ^. metaInput .to (metaCommand ns)
 
             (InputMode _, KChar c) ->
                 continue $
@@ -499,14 +535,14 @@ previewOrNavigate ns =
                     & navimHistory
                     %~ withNewCurrentDir newCurDir
                     & navimStatePaths
-                    %~ \newPaths ->
-                          fromMaybe (nonEmptyCursorReset newPaths) $
-                              nonEmptyCursorSearch
-                                  ((== nextFocus) . getPath)
-                                  newPaths
+                    %~ \paths ->
+                        fromMaybe (nonEmptyCursorReset paths) $
+                            nonEmptyCursorSearch
+                                ((== nextFocus) . getPath)
+                                paths
 
-colonCommand :: NavimStateRN -> String -> EventM n (Next NavimStateRN)
-colonCommand ns input =
+metaCommand :: NavimStateRN -> String -> EventM n (Next NavimStateRN)
+metaCommand ns input =
     case input of
         ":q" -> halt ns
         -- TODO: other meta commands
@@ -516,7 +552,27 @@ colonCommand ns input =
                 >> (buildState . Just $
                        ns & navimMode
                           .~ NavigationMode (Navigation Indicate))
-
+        ['/'] ->
+            continue $
+                ns & navimMode
+                   .~ NavigationMode (Navigation Indicate)
+                   & navimSearch
+                   .~ ""
+        '/':cs ->
+            let searchQuery = toLower <$> cs in
+            continue $
+                ns & navimMode
+                   .~ NavigationMode (Navigation Indicate)
+                   & navimSearch
+                   .~ searchQuery
+                   & navimStatePaths
+                   %~ \paths ->
+                       fromMaybe paths $
+                           nonEmptyCursorCircularSearch
+                               ((searchQuery `isPrefixOf`)
+                                . (toLower <$>)
+                                . getPath)
+                               paths
         _ -> continue $
                  ns & navimMode
                     .~ NavigationMode (Navigation Indicate)
@@ -572,5 +628,27 @@ changeDirHistoryWith changeFn ns = do
                    & navimHistory
                    . redoDirectories
                    .~ []
+
+nonEmptyCursorCircularSearch :: (a -> Bool)
+                             -> NonEmptyCursor a
+                             -> Maybe (NonEmptyCursor a)
+nonEmptyCursorCircularSearch p nec@(NEC.NonEmptyCursor prev cur next) =
+    searchWithGas
+        (length prev + length next)
+        p
+        (nonEmptyCursorSelectNextOrCycle nec)
+  where
+    nonEmptyCursorSelectNextOrCycle nec =
+        fromMaybe (nonEmptyCursorSelectFirst nec) (nonEmptyCursorSelectNext nec)
+
+    searchWithGas 0 _ nec = Nothing
+    searchWithGas n p nec
+        | p (nonEmptyCursorCurrent nec)
+            = Just nec
+        | otherwise
+            = searchWithGas
+                  (n - 1)
+                  p
+                  (nonEmptyCursorSelectNextOrCycle nec)
 
 {- END Event Handler Helpers -}

@@ -27,6 +27,8 @@ data Command
 messageString :: Message -> String
 messageString Indicate                   = "--NAVIGATION--"
 
+messageString (Neutral msg)              = msg
+
 messageString (Success CreateFile)       = "File creation succeeded"
 messageString (Success CreateDirectory)  = "Directory creation succeeded"
 messageString (Success Remove)           = "Deletion succeeded"
@@ -78,6 +80,7 @@ messageString (Error command reason) =
 
 data Message
     = Indicate
+    | Neutral String
     | Success Command
     | Error Command DirContentActionError
     deriving (Show, Eq)
@@ -88,11 +91,11 @@ newtype Navigation
     deriving (Show, Eq)
 makeLenses ''Navigation
 
-newtype Colon
-    = Colon
-        { _colonInput :: String }
+newtype Meta
+    = Meta
+        { _metaInput :: String }
     deriving (Show, Eq)
-makeLenses ''Colon
+makeLenses ''Meta
 
 data Input
     = Input
@@ -104,7 +107,7 @@ makeLenses ''Input
 
 data Mode
     = NavigationMode Navigation -- normal file navigation
-    | ColonMode Colon           -- colon commands: ends when input is empty or enter pressed
+    | MetaMode Meta             -- colon/search commands: ends when input is empty or enter pressed
     | InputMode Input           -- waiting for user input with a given prompt
     deriving (Show, Eq)
 makePrisms ''Mode
@@ -142,6 +145,7 @@ data NavimConfig n
             (NavimState n -> EventM n (Next (NavimState n)))
         }
 
+-- TODO: possibly different representation for command map
 instance Show (NavimConfig n) where
     show nc = "CONFIG"
 
@@ -151,6 +155,7 @@ data NavimState n
         , _navimHistory :: DirHistory
         , _navimMode :: Mode
         , _navimClipboard :: Maybe DirContent
+        , _navimSearch :: String
         , _navimWidth :: Int
         , _navimConfig :: NavimConfig n
         } deriving Show
