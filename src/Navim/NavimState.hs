@@ -2,18 +2,17 @@
 
 module Navim.NavimState where
 
-import Cursor.Simple.List.NonEmpty
-
 import Control.Lens
 
-import Navim.DirContent
-
 import Data.HashMap (Map)
-import qualified Data.HashMap as Map
 
 import Brick.Types
 
+import Cursor.Simple.List.NonEmpty
+
 import Graphics.Vty.Input.Events
+
+import Navim.DirContent
 
 data Command
     = CreateFile
@@ -151,16 +150,11 @@ data NavimClipboard
 makeLenses ''NavimClipboard
 
 -- TODO: other fields
-data NavimConfig n
+data NavimConfig commandType
     = NavimConfig
-        { _commandMap :: Map
-            (Key, [Modifier])
-            (NavimState n -> EventM n (Next (NavimState n)))
+        { _commandMap :: Map (Key, [Modifier]) commandType
         }
-
--- TODO: possibly different representation for command map
-instance Show (NavimConfig n) where
-    show nc = "CONFIG"
+    deriving (Show, Eq)
 
 data NavimState n
     = NavimState
@@ -171,7 +165,8 @@ data NavimState n
         , _navimSearch :: String
         , _navimWidth :: Int
         , _navimConfig :: NavimConfig n
-        } deriving Show
+        }
+    deriving (Show, Eq)
 
 makeLenses ''NavimConfig
 makeLenses ''NavimState

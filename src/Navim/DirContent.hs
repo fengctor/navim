@@ -23,9 +23,16 @@ data DirContentActionResult
     | DCError DirContentActionError
     deriving (Show, Eq, Ord)
 
+data ContentType
+    = File
+    | Directory
+    deriving (Show, Eq, Ord)
+
 data DirContent
-    = File FilePath
-    | Directory FilePath
+    = DirContent
+        { contentType :: ContentType
+        , getPath :: FilePath
+        }
     deriving (Show, Eq, Ord)
 
 -- TODO: move to a different module?
@@ -34,10 +41,6 @@ splitOn c (s:ss)
   | c == s = splitOn c ss
   | otherwise = let (left, right) = break (== c) (s:ss)
                     in left : splitOn c right
-
-getPath :: DirContent -> FilePath
-getPath (File fp)      = fp
-getPath (Directory fp) = fp
 
 fromRelativePath :: FilePath -> FilePath -> FilePath
 fromRelativePath current rel =
@@ -69,8 +72,8 @@ createDirContentSafe dc = do
             then pure $ DCError (AlreadyExists dcName dcDir)
             else DCSuccess
                  <$ case dc of
-                        File      name -> writeFile name ""
-                        Directory name -> createDirectory name
+                        (DirContent File name)      -> writeFile name ""
+                        (DirContent Directory name) -> createDirectory name
 
 -- newPath: relative path from current directory which dc will be renamed to
 renameDirContentSafe :: String -> DirContent -> IO DirContentActionResult
@@ -85,9 +88,10 @@ renameDirContentSafe newPath dc = do
             else DCSuccess <$ renamePath (getPath dc) newPath
 
 -- dest: absolute path to destination
+-- Todo: handle directories
 copyDirContentSafe :: String -> DirContent -> IO DirContentActionResult
-copyDirContentSafe dest (Directory _) = error "hi"  -- Todo: handle directories
-copyDirContentSafe dest (File name) = do
+copyDirContentSafe dest (DirContent Directory _) = error "not yet implemented"
+copyDirContentSafe dest (DirContent File name) = do
     curDir <- getCurrentDirectory
     let (destName, destDir) = nameAndDirectory dest
     -- TODO: check destDir is a directory
@@ -100,11 +104,14 @@ copyDirContentSafe dest (File name) = do
 
 -- TODO: may fail based on permissions
 removeDirContentSafe :: DirContent -> IO DirContentActionResult
-removeDirContentSafe (File name)      = DCSuccess <$ removeFile name
-removeDirContentSafe (Directory name) = DCSuccess <$ removeDirectoryRecursive name
+removeDirContentSafe (DirContent File name) =
+    DCSuccess <$ removeFile name
+removeDirContentSafe (DirContent Directory name) =
+    DCSuccess <$ removeDirectoryRecursive name
 
 getDirContents :: FilePath -> IO [DirContent]
 getDirContents dir = do
     rawContents <- getDirectoryContents dir
     for rawContents $ \fp ->
-        bool (Directory fp) (File fp) <$> doesFileExist fp
+        bool (DirContent Directory fp) (DirContent File fp) <$>
+        doesFileExist fp
