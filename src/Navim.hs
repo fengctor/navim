@@ -71,7 +71,10 @@ defaultCommandMap = Map.fromList
       , attemptModifySelectedWith Rename
       )
     , ( (KChar 'y', [])
-      , copySelected
+      , toClipboardAs Replicate
+      )
+    , ( (KChar 'x', [])
+      , toClipboardAs Move
       )
     , ( (KChar 'p', [])
       , pasteClipboard
@@ -109,7 +112,7 @@ defaultCommandMap = Map.fromList
                        .~ Error cmd (InvalidName "..")
                 _ -> toInputMode cmd ns
 
-    copySelected ns =
+    toClipboardAs ct ns =
         continue $
             case ns ^. navimStatePaths
                      . to nonEmptyCursorCurrent of
@@ -121,16 +124,18 @@ defaultCommandMap = Map.fromList
                     ns & navimMode
                        . _NavigationMode . displayMessage
                        .~ Success Copy
-                       & navimClipboard
+                       & navimClipboard . clipboardContent
                        .~ (ns ^. navimHistory
                                . currentDirectory
                                . to (Just
                                     . File
                                     . (++ '/':name)))
+                       & navimClipboard . clipType
+                       .~ ct
 
     pasteClipboard ns =
         continue $
-            case ns ^. navimClipboard of
+            case ns ^. navimClipboard . clipboardContent of
                 Nothing -> ns
                 _       -> toInputMode Paste ns
 
@@ -219,7 +224,7 @@ buildState prevState = do
                         { _navimStatePaths = makeNonEmptyCursor ne
                         , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
-                        , _navimClipboard = Nothing
+                        , _navimClipboard = NavimClipboard Nothing Replicate
                         , _navimSearch = ""
                         , _navimWidth = 1
                         , _navimConfig = NavimConfig $ Map.empty
@@ -321,7 +326,7 @@ drawNavim ns =
                                     , "."
                                     ]
                     Paste ->
-                        case ns ^. navimClipboard of
+                        case ns ^. navimClipboard . clipboardContent of
                             Nothing ->
                                 "Clipboard is empty"
                             Just (Directory _) ->
@@ -552,6 +557,17 @@ metaCommand ns input =
                 >> (buildState . Just $
                        ns & navimMode
                           .~ NavigationMode (Navigation Indicate))
+        ":clipboard" ->
+            continue $
+                ns & navimMode
+                   .~ NavigationMode (Navigation . Neutral $
+                          case ns ^. navimClipboard of
+                              NavimClipboard Nothing _ -> "Clipboard is empty"
+
+                              NavimClipboard (Just clip) Replicate ->
+                                  getPath clip ++ " [COPIED]"
+                              NavimClipboard (Just clip) Move ->
+                                  getPath clip ++ " [CUT]")
         ['/'] ->
             continue $
                 ns & navimMode
@@ -595,14 +611,17 @@ inputCommand ns =
                 Rename ->
                     onSelected $ renameDirContentSafe entered
                 Paste ->
-                    case (entered, ns ^. navimClipboard) of
-                        ("y", Just clip) ->
-                            let (clipName, _) = nameAndDirectory . getPath $ clip in
-                            copyDirContentSafe
-                                (ns ^. navimHistory
-                                     . currentDirectory
-                                     . to (++ '/':clipName))
-                                clip
+                    case (entered, ns ^. navimClipboard . clipboardContent) of
+                        ("y", Just clip) -> do
+                            let (clipName, _) = nameAndDirectory . getPath $ clip
+                            result <- copyDirContentSafe
+                                          (ns ^. navimHistory
+                                               . currentDirectory
+                                               . to (++ '/':clipName))
+                                          clip
+                            case ns ^. navimClipboard . clipType of
+                                 Move -> removeDirContentSafe clip
+                                 _    -> pure result
                         _ ->
                             pure $ DCError Cancelled
         _ -> pure $ DCError Cancelled -- TODO: kind of a silent error

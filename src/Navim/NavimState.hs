@@ -137,6 +137,19 @@ redoDirHistory dh =
 withNewCurrentDir :: FilePath -> DirHistory -> DirHistory
 withNewCurrentDir fp (DirHistory us c rs) = DirHistory (c:us) fp []
 
+data ClipType
+    = Replicate
+    | Move
+    deriving (Show, Eq)
+
+data NavimClipboard
+    = NavimClipboard
+        { _clipboardContent :: Maybe DirContent
+        , _clipType :: ClipType
+        }
+    deriving (Show, Eq)
+makeLenses ''NavimClipboard
+
 -- TODO: other fields
 data NavimConfig n
     = NavimConfig
@@ -154,7 +167,7 @@ data NavimState n
         { _navimStatePaths :: NonEmptyCursor DirContent
         , _navimHistory :: DirHistory
         , _navimMode :: Mode
-        , _navimClipboard :: Maybe DirContent
+        , _navimClipboard :: NavimClipboard
         , _navimSearch :: String
         , _navimWidth :: Int
         , _navimConfig :: NavimConfig n
