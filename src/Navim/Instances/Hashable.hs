@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
-
 module Navim.Instances.Hashable where
 
 import Data.Hashable

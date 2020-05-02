@@ -71,7 +71,7 @@ defaultCommandMap = Map.fromList
       , Internal $ SelectedToClipboard Move
       )
     , ( (KChar 'p', [])
-      , Internal $ PasteClipboard
+      , Internal PasteClipboard
       )
     , ( (KChar 'v', [])
       , External $ BashCommandOnSelected "vim"
@@ -127,7 +127,7 @@ navimApp = App
     }
 
 -- UI Drawer
-drawNavim :: (NavimState NavimCommand) -> [Widget ResourceName]
+drawNavim :: NavimState NavimCommand -> [Widget ResourceName]
 drawNavim ns =
     [
       hBorder
@@ -273,7 +273,7 @@ drawDirContent selected dc =
                 Directory -> "dir"
 
 -- Event Handler
-handleEvent :: (NavimState NavimCommand)
+handleEvent :: NavimState NavimCommand
             -> BrickEvent ResourceName e
             -> EventM ResourceName (Next (NavimState NavimCommand))
 handleEvent s e = do

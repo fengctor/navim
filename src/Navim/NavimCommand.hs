@@ -115,7 +115,7 @@ buildState prevState = do
                         , _navimClipboard = NavimClipboard Nothing Replicate
                         , _navimSearch = ""
                         , _navimWidth = 1
-                        , _navimConfig = NavimConfig $ Map.empty
+                        , _navimConfig = NavimConfig Map.empty
                         }
                 Just ps ->
                     pure $
