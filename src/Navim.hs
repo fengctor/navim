@@ -35,49 +35,55 @@ defaultCommandMap :: Map
     NavimCommand
 defaultCommandMap = Map.fromList
     [ ( (KChar 'j', [])
-      , MoveCursor CursorDown
+      , Internal $ MoveCursor CursorDown
       )
     , ( (KChar 'k', [])
-      , MoveCursor CursorUp
+      , Internal $ MoveCursor CursorUp
+      )
+    , ( (KChar 'J', [])
+      , Internal . Sequence $ replicate 3 (MoveCursor CursorDown)
+      )
+    , ( (KChar 'K', [])
+      , Internal . Sequence $ replicate 3 (MoveCursor CursorUp)
       )
     , ( (KChar 'g', [])
-      , MoveCursor CursorTop
+      , Internal $ MoveCursor CursorTop
       )
     , ( (KChar 'G', [])
-      , MoveCursor CursorBottom
+      , Internal $ MoveCursor CursorBottom
       )
     , ( (KChar 'n', [])
-      , CreateContent File
+      , Internal $ CreateContent File
       )
     , ( (KChar 'N', [])
-      , CreateContent Directory
+      , Internal $ CreateContent Directory
       )
     , ( (KChar 'd', [])
-      , ModifySelected Remove
+      , Internal $ ModifySelected Remove
       )
     , ( (KChar 'r', [])
-      , ModifySelected Rename
+      , Internal $ ModifySelected Rename
       )
     , ( (KChar 'y', [])
-      , SelectedToClipboard Replicate
+      , Internal $ SelectedToClipboard Replicate
       )
     , ( (KChar 'x', [])
-      , SelectedToClipboard Move
+      , Internal $ SelectedToClipboard Move
       )
     , ( (KChar 'p', [])
-      , PasteClipboard
+      , Internal $ PasteClipboard
       )
     , ( (KChar 'v', [])
-      , BashCommandOnSelected "vim"
+      , External $ BashCommandOnSelected "vim"
       )
     , ( (KChar 'u', [])
-      , ChangeDirHistory Undo
+      , Internal $ ChangeDirHistory Undo
       )
     , ( (KChar 'r', [MCtrl])
-      , ChangeDirHistory Redo
+      , Internal $ ChangeDirHistory Redo
       )
     , ( (KChar 'f', [])
-      , PerformSearch
+      , Internal PerformSearch
       )
     ]
 
@@ -283,9 +289,9 @@ handleEvent s e = do
                 EvKey KEnter [] -> dispatchKey ns KEnter $
                                        previewOrNavigate ns
                 EvKey KUp    [] -> dispatchKey ns KEnter $
-                                       moveCursorWith nonEmptyCursorSelectPrev ns
+                                       continue $ moveCursorWith nonEmptyCursorSelectPrev ns
                 EvKey KDown  [] -> dispatchKey ns KEnter $
-                                       moveCursorWith nonEmptyCursorSelectNext ns
+                                       continue $ moveCursorWith nonEmptyCursorSelectNext ns
 
                 EvKey key@(KChar ':') [] ->
                     dispatchKey ns key $

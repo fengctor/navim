@@ -5,6 +5,7 @@ import System.Exit
 import System.Process
 
 import Control.Lens
+import Control.Monad
 import Control.Monad.IO.Class
 
 import Data.Char
@@ -35,49 +36,67 @@ data DirHistoryModifier
     deriving (Show, Eq)
 
 -- TODO: AndThen for sequencing commands
-data NavimCommand
-    = MoveCursor CursorMovement
+data InternalCommand
+    = Sequence [InternalCommand]
+    | MoveCursor CursorMovement
     | CreateContent ContentType -- TODO: DirContent as product type
     | ModifySelected Command
     | SelectedToClipboard ClipType
     | PasteClipboard
-    | BashCommandOnSelected String
     | ChangeDirHistory DirHistoryModifier
     | PerformSearch
     deriving (Show, Eq)
 
+data ExternalCommand
+    = BashCommandOnSelected String
+    deriving (Show, Eq)
 
-commandFunction :: NavimCommand
-                -> (NavimState NavimCommand -> EventM n (Next (NavimState NavimCommand)))
-commandFunction (MoveCursor cm) =
-    moveCursorWith $ case cm of
+data NavimCommand
+    = Internal InternalCommand
+    | External ExternalCommand
+    deriving (Show, Eq)
+
+internalFunction :: InternalCommand
+                 -> NavimState NavimCommand
+                 -> IO (NavimState NavimCommand)
+internalFunction (Sequence cmds) =
+    foldr ((>=>) . internalFunction) return cmds
+internalFunction (MoveCursor cursorMvmt) =
+    return . moveCursorWith (case cursorMvmt of
         CursorUp      -> nonEmptyCursorSelectPrev
         CursorDown    -> nonEmptyCursorSelectNext
         CursorTop     -> Just . nonEmptyCursorSelectFirst
         CursorBottom  -> Just . nonEmptyCursorSelectLast
-commandFunction (CreateContent contenttype) =
-    continue
-    . (toInputMode $ case contenttype of
-           File      -> CreateFile
-           Directory -> CreateDirectory
-      )
-commandFunction (ModifySelected cmd) =
-    modifySelectedWith cmd
-commandFunction (SelectedToClipboard cliptype) =
-    selectedToClipboard cliptype
-commandFunction PasteClipboard =
-    pasteClipboard
-commandFunction (BashCommandOnSelected cmdStr) =
+    )
+internalFunction (CreateContent ctype) =
+    return . toInputMode (case ctype of
+        File      -> CreateFile
+        Directory -> CreateDirectory
+    )
+internalFunction (ModifySelected cmd) =
+    return . modifySelectedWith cmd
+internalFunction (SelectedToClipboard cliptype) =
+    return . selectedToClipboard cliptype
+internalFunction PasteClipboard =
+    return . pasteClipboard
+internalFunction (ChangeDirHistory dhm) =
+    changeDirHistoryWith $ case dhm of
+        Undo -> undoDirHistory
+        Redo -> redoDirHistory
+internalFunction PerformSearch =
+    return . performSearch
+
+externalFunction :: ExternalCommand
+                 -> NavimState NavimCommand
+                 -> IO (NavimState NavimCommand)
+externalFunction (BashCommandOnSelected cmdStr) =
     bashCommandOnSelected cmdStr
-commandFunction (ChangeDirHistory dhm) =
-    (>>= continue)
-    . liftIO
-    . (changeDirHistoryWith $ case dhm of
-           Undo -> undoDirHistory
-           Redo -> redoDirHistory
-      )
-commandFunction PerformSearch =
-    performSearch
+
+commandFunction :: NavimCommand
+                -> NavimState NavimCommand
+                -> EventM n (Next (NavimState NavimCommand))
+commandFunction (Internal i) = (>>= continue) . liftIO . internalFunction i
+commandFunction (External e) = suspendAndResume . externalFunction e
 
 -- State Transformer (and I don't mean the monad ;))
 buildState :: Maybe (NavimState n) -> IO (NavimState n)
@@ -112,95 +131,94 @@ buildState prevState = do
             Nothing   -> newNec
             Just nec' -> moveNextBy (n - 1) nec'
 
-
-
+toInputMode :: Command -> NavimState NavimCommand -> NavimState NavimCommand
 toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
+modifySelectedWith :: Command -> NavimState NavimCommand -> NavimState NavimCommand
 modifySelectedWith cmd ns =
-    continue $
-        case ns ^. navimStatePaths
-                 . to nonEmptyCursorCurrent of
-            DirContent Directory "." ->
-                ns & navimMode
-                   . _NavigationMode . displayMessage
-                   .~ Error cmd (InvalidName ".")
-            DirContent Directory ".." ->
-                ns & navimMode
-                   . _NavigationMode . displayMessage
-                   .~ Error cmd (InvalidName "..")
-            _ -> toInputMode cmd ns
+    case ns ^. navimStatePaths
+             . to nonEmptyCursorCurrent of
+        DirContent Directory "." ->
+            ns & navimMode
+               . _NavigationMode . displayMessage
+               .~ Error cmd (InvalidName ".")
+        DirContent Directory ".." ->
+            ns & navimMode
+               . _NavigationMode . displayMessage
+               .~ Error cmd (InvalidName "..")
+        _ -> toInputMode cmd ns
 
+selectedToClipboard :: ClipType -> NavimState NavimCommand -> NavimState NavimCommand
 selectedToClipboard ct ns =
-    continue $
-        case ns ^. navimStatePaths
-                 . to nonEmptyCursorCurrent of
-            DirContent Directory name ->
-                ns & navimMode
-                   . _NavigationMode . displayMessage
-                   .~ Error Copy (InvalidName name)
-            DirContent File name ->
-                ns & navimMode
-                   . _NavigationMode . displayMessage
-                   .~ Success Copy
-                   & navimClipboard . clipboardContent
-                   .~ (ns ^. navimHistory
-                           . currentDirectory
-                           . to (Just
-                                . DirContent File
-                                . (++ '/':name)))
-                   & navimClipboard . clipType
-                   .~ ct
+    case ns ^. navimStatePaths
+             . to nonEmptyCursorCurrent of
+        DirContent Directory name ->
+            ns & navimMode
+               . _NavigationMode . displayMessage
+               .~ Error Copy (InvalidName name)
+        DirContent File name ->
+            ns & navimMode
+               . _NavigationMode . displayMessage
+               .~ Success Copy
+               & navimClipboard . clipboardContent
+               .~ (ns ^. navimHistory
+                       . currentDirectory
+                       . to (Just
+                            . DirContent File
+                            . (++ '/':name)))
+               & navimClipboard . clipType
+               .~ ct
 
+pasteClipboard :: NavimState NavimCommand -> NavimState NavimCommand
 pasteClipboard ns =
-    continue $
-        case ns ^. navimClipboard . clipboardContent of
-            Nothing -> ns
-            _       -> toInputMode Paste ns
+    case ns ^. navimClipboard . clipboardContent of
+        Nothing -> ns
+        _       -> toInputMode Paste ns
 
+bashCommandOnSelected :: String
+                      -> NavimState NavimCommand
+                      -> IO (NavimState NavimCommand)
 bashCommandOnSelected cmdStr ns =
-    suspendAndResume $
-        ns <$
-        callProcess
-            cmdStr
-            [ns ^. navimStatePaths
-                 . to (getPath . nonEmptyCursorCurrent)]
+    ns <$
+    callProcess
+        cmdStr
+        [ns ^. navimStatePaths
+             . to (getPath . nonEmptyCursorCurrent)]
 
+performSearch :: NavimState NavimCommand -> NavimState NavimCommand
 performSearch ns =
-    let nsSearch = ns ^. navimSearch
-                       . to (toLower <$>) in
-    continue $
-        ns & navimMode
-           . _NavigationMode . displayMessage
-           .~ case nsSearch of
-                  "" -> Indicate
-                  _  -> Neutral ('/' : nsSearch)
-           & navimStatePaths
-           %~ \paths ->
-               case nsSearch of
-                   "" -> paths
-                   savedQuery ->
-                       fromMaybe paths $
-                           nonEmptyCursorCircularSearch
-                               ((savedQuery `isPrefixOf`)
-                                . (toLower <$>)
-                                . getPath)
-                               paths
-
-{- BEGIN Event Handler Helpers -}
+    ns & navimMode
+       . _NavigationMode . displayMessage
+       .~ case nsSearch of
+              "" -> Indicate
+              _  -> Neutral ('/' : nsSearch)
+       & navimStatePaths
+       %~ \paths ->
+           case nsSearch of
+               "" -> paths
+               savedQuery ->
+                   fromMaybe paths $
+                       nonEmptyCursorCircularSearch
+                           ((savedQuery `isPrefixOf`)
+                            . (toLower <$>)
+                            . getPath)
+                           paths
+  where
+    nsSearch = ns ^. navimSearch
+                   . to (toLower <$>)
 
 -- Note: clears the error message too
 moveCursorWith :: (NonEmptyCursor DirContent -> Maybe (NonEmptyCursor DirContent))
                -> NavimState NavimCommand
-               -> EventM n (Next (NavimState NavimCommand))
+               -> NavimState NavimCommand
 moveCursorWith move ns =
-    continue $
-        case move $ ns ^. navimStatePaths of
-            Nothing     -> ns & navimMode . _NavigationMode . displayMessage
-                              .~ Indicate
-            Just newNec -> ns & navimStatePaths
-                              .~ newNec
-                              & navimMode . _NavigationMode . displayMessage
-                              .~ Indicate
+    case move $ ns ^. navimStatePaths of
+        Nothing     -> ns & navimMode . _NavigationMode . displayMessage
+                          .~ Indicate
+        Just newNec -> ns & navimStatePaths
+                          .~ newNec
+                          & navimMode . _NavigationMode . displayMessage
+                          .~ Indicate
 
 previewOrNavigate :: NavimState NavimCommand -> EventM n (Next (NavimState NavimCommand))
 previewOrNavigate ns =
