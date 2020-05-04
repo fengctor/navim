@@ -1,27 +1,27 @@
 module Navim.NavimCommand where
 
-import System.Directory
-import System.Exit
-import System.Process
+import           System.Directory
+import           System.Exit
+import           System.Process
 
-import Control.Lens
-import Control.Monad
-import Control.Monad.IO.Class
+import           Control.Lens
+import           Control.Monad
+import           Control.Monad.IO.Class
 
-import Data.Char
-import qualified Data.HashMap as Map
-import Data.List
-import qualified Data.List.NonEmpty as NE
-import Data.Maybe
+import           Data.Char
+import qualified Data.HashMap                as Map
+import           Data.List
+import qualified Data.List.NonEmpty          as NE
+import           Data.Maybe
 
-import Brick.Types
-import Brick.Main
+import           Brick.Main
+import           Brick.Types
 
-import qualified Cursor.List.NonEmpty as NEC (NonEmptyCursor(..))
-import Cursor.Simple.List.NonEmpty
+import qualified Cursor.List.NonEmpty        as NEC (NonEmptyCursor (..))
+import           Cursor.Simple.List.NonEmpty
 
-import Navim.DirContent
-import Navim.NavimState
+import           Navim.DirContent
+import           Navim.NavimState
 
 data CursorMovement
     = CursorUp
@@ -35,16 +35,23 @@ data DirHistoryModifier
     | Redo
     deriving (Show, Eq)
 
--- TODO: AndThen for sequencing commands
-data InternalCommand
-    = Sequence [InternalCommand]
-    | MoveCursor CursorMovement
-    | CreateContent ContentType -- TODO: DirContent as product type
-    | ModifySelected Command
+data NoInputCommand
+    = MoveCursor CursorMovement
     | SelectedToClipboard ClipType
-    | PasteClipboard
     | ChangeDirHistory DirHistoryModifier
     | PerformSearch
+    deriving (Show, Eq)
+
+data WithInputCommand
+    = CreateContent ContentType
+    | ModifySelected Command
+    | PasteClipboard
+    deriving (Show, Eq)
+
+data InternalCommand
+    = NoInput NoInputCommand
+    | WithInput WithInputCommand
+    | Sequence [NoInputCommand] (Maybe WithInputCommand)
     deriving (Show, Eq)
 
 data ExternalCommand
@@ -56,35 +63,48 @@ data NavimCommand
     | External ExternalCommand
     deriving (Show, Eq)
 
-internalFunction :: InternalCommand
-                 -> NavimState NavimCommand
-                 -> IO (NavimState NavimCommand)
-internalFunction (Sequence cmds) =
-    foldr ((>=>) . internalFunction) return cmds
-internalFunction (MoveCursor cursorMvmt) =
+noInputFunction :: NoInputCommand
+                -> NavimState NavimCommand
+                -> IO (NavimState NavimCommand)
+noInputFunction (MoveCursor cursorMvmt) =
     return . moveCursorWith (case cursorMvmt of
-        CursorUp      -> nonEmptyCursorSelectPrev
-        CursorDown    -> nonEmptyCursorSelectNext
-        CursorTop     -> Just . nonEmptyCursorSelectFirst
-        CursorBottom  -> Just . nonEmptyCursorSelectLast
+        CursorUp     -> nonEmptyCursorSelectPrev
+        CursorDown   -> nonEmptyCursorSelectNext
+        CursorTop    -> Just . nonEmptyCursorSelectFirst
+        CursorBottom -> Just . nonEmptyCursorSelectLast
     )
-internalFunction (CreateContent ctype) =
+noInputFunction (SelectedToClipboard cliptype) =
+    return . selectedToClipboard cliptype
+noInputFunction (ChangeDirHistory dhm) =
+    changeDirHistoryWith $ case dhm of
+        Undo -> undoDirHistory
+        Redo -> redoDirHistory
+noInputFunction PerformSearch =
+    return . performSearch
+
+withInputFunction :: WithInputCommand
+                  -> NavimState NavimCommand
+                  -> IO (NavimState NavimCommand)
+withInputFunction (CreateContent ctype) =
     return . toInputMode (case ctype of
         File      -> CreateFile
         Directory -> CreateDirectory
     )
-internalFunction (ModifySelected cmd) =
+withInputFunction (ModifySelected cmd) =
     return . modifySelectedWith cmd
-internalFunction (SelectedToClipboard cliptype) =
-    return . selectedToClipboard cliptype
-internalFunction PasteClipboard =
+withInputFunction PasteClipboard =
     return . pasteClipboard
-internalFunction (ChangeDirHistory dhm) =
-    changeDirHistoryWith $ case dhm of
-        Undo -> undoDirHistory
-        Redo -> redoDirHistory
-internalFunction PerformSearch =
-    return . performSearch
+
+internalFunction :: InternalCommand
+                 -> NavimState NavimCommand
+                 -> IO (NavimState NavimCommand)
+internalFunction (NoInput nic)   = noInputFunction nic
+internalFunction (WithInput wic) = withInputFunction wic
+internalFunction (Sequence nics mwic) =
+    foldr
+        ((>=>) . noInputFunction)
+        (maybe return withInputFunction mwic)
+        nics
 
 externalFunction :: ExternalCommand
                  -> NavimState NavimCommand
@@ -95,7 +115,7 @@ externalFunction (BashCommandOnSelected cmdStr) =
 commandFunction :: NavimCommand
                 -> NavimState NavimCommand
                 -> EventM n (Next (NavimState NavimCommand))
-commandFunction (Internal i) = (>>= continue) . liftIO . internalFunction i
+commandFunction (Internal i) = continue <=< (liftIO . internalFunction i)
 commandFunction (External e) = suspendAndResume . externalFunction e
 
 -- State Transformer (and I don't mean the monad ;))

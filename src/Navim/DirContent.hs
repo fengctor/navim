@@ -1,17 +1,14 @@
 module Navim.DirContent where
 
-import System.Directory
+import           System.Directory
 
-import Data.Bifunctor
-import Data.Bool
-import Data.List
-import Data.Traversable
-
--- TODO: instead of Bool, use a Success/Failure type
--- ie. boolean blindness bad
+import           Data.Bifunctor
+import           Data.Bool
+import           Data.List
+import           Data.Traversable
 
 data DirContentActionError
-    = AlreadyExists FilePath FilePath -- file name, residing directory
+    = AlreadyExists FilePath FilePath
     | DoesNotExist FilePath
     | InsufficientPermissions FilePath
     | InvalidName FilePath
@@ -31,7 +28,7 @@ data ContentType
 data DirContent
     = DirContent
         { contentType :: ContentType
-        , getPath :: FilePath
+        , getPath     :: FilePath
         }
     deriving (Show, Eq, Ord)
 

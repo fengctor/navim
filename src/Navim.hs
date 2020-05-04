@@ -2,88 +2,88 @@
 
 module Navim where
 
-import Data.Bool
-import Data.HashMap (Map)
-import qualified Data.HashMap as Map
-import Data.Maybe
-import Data.Tuple
+import           Data.Bool
+import           Data.HashMap                (Map)
+import qualified Data.HashMap                as Map
+import           Data.Maybe
+import           Data.Tuple
 
-import Control.Lens
-import Control.Monad.IO.Class
+import           Control.Lens
+import           Control.Monad.IO.Class
 
-import Brick.AttrMap
-import Brick.Main
-import Brick.Types
-import Brick.Util
-import Brick.Widgets.Border
-import Brick.Widgets.Core
+import           Brick.AttrMap
+import           Brick.Main
+import           Brick.Types
+import           Brick.Util
+import           Brick.Widgets.Border
+import           Brick.Widgets.Core
 
-import Cursor.Simple.List.NonEmpty
+import           Cursor.Simple.List.NonEmpty
 
-import Graphics.Vty.Attributes
-import Graphics.Vty.Input.Events
+import           Graphics.Vty.Attributes
+import           Graphics.Vty.Input.Events
 
-import Text.Wrap
+import           Text.Wrap
 
-import Navim.DirContent
-import Navim.Instances.Hashable
-import Navim.NavimState
-import Navim.NavimCommand
+import           Navim.DirContent
+import           Navim.Instances.Hashable
+import           Navim.NavimCommand
+import           Navim.NavimState
 
 defaultCommandMap :: Map
     (Key, [Modifier])
     NavimCommand
 defaultCommandMap = Map.fromList
     [ ( (KChar 'j', [])
-      , Internal $ MoveCursor CursorDown
+      , Internal . NoInput $ MoveCursor CursorDown
       )
     , ( (KChar 'k', [])
-      , Internal $ MoveCursor CursorUp
+      , Internal . NoInput $ MoveCursor CursorUp
       )
     , ( (KChar 'J', [])
-      , Internal . Sequence $ replicate 3 (MoveCursor CursorDown)
+      , Internal $ Sequence (replicate 3 (MoveCursor CursorDown)) Nothing
       )
     , ( (KChar 'K', [])
-      , Internal . Sequence $ replicate 3 (MoveCursor CursorUp)
+      , Internal $ Sequence (replicate 3 (MoveCursor CursorUp)) Nothing
       )
     , ( (KChar 'g', [])
-      , Internal $ MoveCursor CursorTop
+      , Internal . NoInput $ MoveCursor CursorTop
       )
     , ( (KChar 'G', [])
-      , Internal $ MoveCursor CursorBottom
+      , Internal . NoInput $ MoveCursor CursorBottom
       )
     , ( (KChar 'n', [])
-      , Internal $ CreateContent File
+      , Internal . WithInput $ CreateContent File
       )
     , ( (KChar 'N', [])
-      , Internal $ CreateContent Directory
+      , Internal . WithInput $ CreateContent Directory
       )
     , ( (KChar 'd', [])
-      , Internal $ ModifySelected Remove
+      , Internal . WithInput $ ModifySelected Remove
       )
     , ( (KChar 'r', [])
-      , Internal $ ModifySelected Rename
+      , Internal . WithInput $ ModifySelected Rename
       )
     , ( (KChar 'y', [])
-      , Internal $ SelectedToClipboard Replicate
+      , Internal . NoInput $ SelectedToClipboard Replicate
       )
     , ( (KChar 'x', [])
-      , Internal $ SelectedToClipboard Move
+      , Internal . NoInput $ SelectedToClipboard Move
       )
     , ( (KChar 'p', [])
-      , Internal PasteClipboard
+      , Internal . WithInput $ PasteClipboard
       )
     , ( (KChar 'v', [])
       , External $ BashCommandOnSelected "vim"
       )
     , ( (KChar 'u', [])
-      , Internal $ ChangeDirHistory Undo
+      , Internal . NoInput $ ChangeDirHistory Undo
       )
     , ( (KChar 'r', [MCtrl])
-      , Internal $ ChangeDirHistory Redo
+      , Internal . NoInput $ ChangeDirHistory Redo
       )
     , ( (KChar 'f', [])
-      , Internal PerformSearch
+      , Internal . NoInput $ PerformSearch
       )
     ]
 
@@ -231,10 +231,10 @@ drawNavim ns =
                     navigation ^. displayMessage
                                 . to (str . messageString)
                                 . to (case navigation ^. displayMessage of
-                                         Indicate    -> id
-                                         Neutral _   -> id
-                                         Success _   -> withAttr "success"
-                                         Error _ _   -> withAttr "error")
+                                         Indicate  -> id
+                                         Neutral _ -> id
+                                         Success _ -> withAttr "success"
+                                         Error _ _ -> withAttr "error")
                 MetaMode meta ->
                     meta ^. metaInput
                           . to (++ ['_'])
@@ -315,65 +315,69 @@ handleEvent s e = do
 
                 EvKey key modifier ->
                     dispatchKey ns key $
-                        fromMaybe
-                            continue
+                        maybe
+                            keyNotBound
+                            commandFunction
                             (ns ^. navimConfig . commandMap
                                  . to (Map.lookup (key, modifier))
-                                 . to (commandFunction <$>)
                             )
                         ns
 
                 _ -> continue ns
         _ -> continue ns
   where
-    safeInit [] = []
-    safeInit xs = init xs
-
     toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-    dispatchKey :: NavimState NavimCommand
-                -> Key
-                -> EventM n (Next (NavimState NavimCommand))
-                -> EventM n (Next (NavimState NavimCommand))
-    dispatchKey ns key navAction =
-        case (ns ^. navimMode, key) of
-            (NavigationMode _, _) -> navAction
+    keyNotBound = continue
+                  . (navimMode . _NavigationMode . displayMessage
+                     .~ Neutral "KEY NOT BOUND")
 
-            (MetaMode _, KChar c) ->
-                continue $
-                    ns & navimMode . _MetaMode . metaInput
-                       %~ (++ [c])
-            (MetaMode meta, KBS) ->
-                case meta ^. metaInput of
-                    [] ->
-                        error "Programmer error: meta input should never be empty"
-                    [_] ->
-                        continue $
-                            ns & navimMode
-                               .~ NavigationMode (Navigation Indicate)
-                    cs ->
-                        continue $
-                            ns & navimMode . _MetaMode . metaInput
-                               %~ safeInit
-            (MetaMode meta, KEnter) ->
-                meta ^. metaInput . to (metaCommand ns)
+dispatchKey :: NavimState NavimCommand
+            -> Key
+            -> EventM n (Next (NavimState NavimCommand))
+            -> EventM n (Next (NavimState NavimCommand))
+dispatchKey ns key navAction =
+    case (ns ^. navimMode, key) of
+        (NavigationMode _, _) -> navAction
 
-            (InputMode _, KChar c) ->
-                continue $
-                    ns & navimMode . _InputMode . inputResponse
-                       %~ (++ [c])
-            (InputMode _, KBS) ->
-                continue $
-                    ns & navimMode . _InputMode . inputResponse
-                       %~ safeInit
-            (InputMode input, KEnter) ->
-                input ^. command
-                       . to (performInputCommand ns)
-            (InputMode _, _) ->
-                continue ns -- TODO!!!!!!!!
+        (MetaMode _, KChar c) ->
+            continue $
+                ns & navimMode . _MetaMode . metaInput
+                   %~ (++ [c])
+        (MetaMode meta, KBS) ->
+            case meta ^. metaInput of
+                [] ->
+                    error "Programmer error: meta input should never be empty"
+                [_] ->
+                    continue $
+                        ns & navimMode
+                           .~ NavigationMode (Navigation Indicate)
+                cs ->
+                    continue $
+                        ns & navimMode . _MetaMode . metaInput
+                           %~ safeInit
+        (MetaMode meta, KEnter) ->
+            meta ^. metaInput . to (metaCommand ns)
 
-            (_, _) ->
-                continue ns
+        (InputMode _, KChar c) ->
+            continue $
+                ns & navimMode . _InputMode . inputResponse
+                   %~ (++ [c])
+        (InputMode _, KBS) ->
+            continue $
+                ns & navimMode . _InputMode . inputResponse
+                   %~ safeInit
+        (InputMode input, KEnter) ->
+            input ^. command
+                   . to (performInputCommand ns)
+        (InputMode _, _) ->
+            continue ns -- TODO!!!!!!!!
+
+        (_, _) ->
+            continue ns
+  where
+    safeInit [] = []
+    safeInit xs = init xs
 
     performInputCommand ns cmd = do
         dcResult <- liftIO . inputCommand $ ns
@@ -383,6 +387,6 @@ handleEvent s e = do
                 .~ NavigationMode
                        (Navigation $ case dcResult of
                             DCSuccess -> Success cmd
-                            DCError e -> Error cmd e)
-
+                            DCError e -> Error cmd e
+                       )
 

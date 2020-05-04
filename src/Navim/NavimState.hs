@@ -2,17 +2,17 @@
 
 module Navim.NavimState where
 
-import Control.Lens
+import           Control.Lens
 
-import Data.HashMap (Map)
+import           Data.HashMap                (Map)
 
-import Brick.Types
+import           Brick.Types
 
-import Cursor.Simple.List.NonEmpty
+import           Cursor.Simple.List.NonEmpty
 
-import Graphics.Vty.Input.Events
+import           Graphics.Vty.Input.Events
 
-import Navim.DirContent
+import           Navim.DirContent
 
 data Command
     = CreateFile
@@ -24,16 +24,16 @@ data Command
     deriving (Show, Eq)
 
 messageString :: Message -> String
-messageString Indicate                   = "--NAVIGATION--"
+messageString Indicate = "--NAVIGATION--"
 
-messageString (Neutral msg)              = msg
+messageString (Neutral msg) = msg
 
-messageString (Success CreateFile)       = "File creation succeeded"
-messageString (Success CreateDirectory)  = "Directory creation succeeded"
-messageString (Success Remove)           = "Deletion succeeded"
-messageString (Success Rename)           = "Renaming succeeded"
-messageString (Success Copy)             = "Copied content to clipboard"
-messageString (Success Paste)            = "Clipboard content pasted"
+messageString (Success CreateFile)      = "File creation succeeded"
+messageString (Success CreateDirectory) = "Directory creation succeeded"
+messageString (Success Remove)          = "Deletion succeeded"
+messageString (Success Rename)          = "Renaming succeeded"
+messageString (Success Copy)            = "Copied content to clipboard"
+messageString (Success Paste)           = "Clipboard content pasted"
 
 messageString (Error command reason) =
     mconcat
@@ -98,25 +98,25 @@ makeLenses ''Meta
 
 data Input
     = Input
-        { _command :: Command
+        { _command       :: Command
         , _inputResponse :: String
         }
     deriving (Show, Eq)
 makeLenses ''Input
 
 data Mode
-    = NavigationMode Navigation -- normal file navigation
-    | MetaMode Meta             -- colon/search commands: ends when input is empty or enter pressed
-    | InputMode Input           -- waiting for user input with a given prompt
+    = NavigationMode Navigation
+    | MetaMode Meta
+    | InputMode Input
     deriving (Show, Eq)
 makePrisms ''Mode
 
 -- Undo stack, current directory, and redo stack
 data DirHistory
     = DirHistory
-        { _undoDirectories :: [FilePath]
+        { _undoDirectories  :: [FilePath]
         , _currentDirectory :: FilePath
-        , _redoDirectories :: [FilePath]
+        , _redoDirectories  :: [FilePath]
         }
     deriving (Show, Eq)
 makeLenses ''DirHistory
@@ -144,7 +144,7 @@ data ClipType
 data NavimClipboard
     = NavimClipboard
         { _clipboardContent :: Maybe DirContent
-        , _clipType :: ClipType
+        , _clipType         :: ClipType
         }
     deriving (Show, Eq)
 makeLenses ''NavimClipboard
@@ -159,12 +159,12 @@ data NavimConfig commandType
 data NavimState n
     = NavimState
         { _navimStatePaths :: NonEmptyCursor DirContent
-        , _navimHistory :: DirHistory
-        , _navimMode :: Mode
-        , _navimClipboard :: NavimClipboard
-        , _navimSearch :: String
-        , _navimWidth :: Int
-        , _navimConfig :: NavimConfig n
+        , _navimHistory    :: DirHistory
+        , _navimMode       :: Mode
+        , _navimClipboard  :: NavimClipboard
+        , _navimSearch     :: String
+        , _navimWidth      :: Int
+        , _navimConfig     :: NavimConfig n
         }
     deriving (Show, Eq)
 
