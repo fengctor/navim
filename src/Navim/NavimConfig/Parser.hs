@@ -94,9 +94,6 @@ newlines1 = () <$ some newline
 listWithSep :: Parser b -> Parser a -> Parser [a]
 listWithSep psep p = (:) <$> p <*> many (psep *> p)
 
-listWithSepEnding :: Parser b -> Parser a -> Parser [a]
-listWithSepEnding psep p = many (p <* psep)
-
 -- Key parser
 
 modifiers :: [(Modifier, String)]
@@ -243,10 +240,11 @@ parseCommandMap :: Parser (Map (Key, [Modifier]) NavimCommand)
 parseCommandMap =
     Map.fromList <$>
         (newlines *>
-         (listWithSepEnding newlines1 $
+         (listWithSep newlines1 $
              (,) <$> (parseKeyWithModifier <* spaces <* char ':' <* spaces)
                  <*> parseNavimCommand
-         )
+         ) <*
+         newlines
         )
 
 parseNavimConfigWithNavimCommand :: Parser (NavimConfig NavimCommand)
