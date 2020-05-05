@@ -41,6 +41,7 @@ data NoInputCommand
     | SelectedToClipboard ClipType
     | ChangeDirHistory DirHistoryModifier
     | PerformSearch
+    | NavigateSelected
     deriving (Show, Eq)
 
 data WithInputCommand
@@ -82,6 +83,8 @@ noInputFunction (ChangeDirHistory dhm) =
         Redo -> redoDirHistory
 noInputFunction PerformSearch =
     return . performSearch
+noInputFunction NavigateSelected =
+    navigateSelected
 
 withInputFunction :: WithInputCommand
                   -> NavimState NavimCommand
@@ -245,6 +248,38 @@ moveCursorWith move ns =
                           & navimMode . _NavigationMode . displayMessage
                           .~ Indicate
 
+navigateSelected :: NavimState NavimCommand -> IO (NavimState NavimCommand)
+navigateSelected ns =
+    case ns ^. navimStatePaths
+             . to nonEmptyCursorCurrent of
+        DirContent File fp ->
+            return $
+                ns & navimMode . _NavigationMode . displayMessage
+                   .~ Indicate -- TODO: proper error message
+
+        DirContent Directory fp -> do
+            let (curDir, _) = ns ^. navimHistory
+                                  . currentDirectory
+                                  . to nameAndDirectory
+            let nextFocus = if fp == ".." then curDir else "."
+            liftIO $ setCurrentDirectory fp
+            newCurDir <- getCurrentDirectory
+            ns'       <- buildState . Just $
+                             ns & navimStatePaths
+                                %~ nonEmptyCursorReset
+            return $
+                ns' & navimMode . _NavigationMode . displayMessage
+                    .~ Indicate
+                    & navimHistory
+                    %~ withNewCurrentDir newCurDir
+                    & navimStatePaths
+                    %~ \paths ->
+                        fromMaybe (nonEmptyCursorReset paths) $
+                            nonEmptyCursorSearch
+                                ((== nextFocus) . getPath)
+                                paths
+
+-- TODO: use navigate
 previewOrNavigate :: NavimState NavimCommand -> EventM n (Next (NavimState NavimCommand))
 previewOrNavigate ns =
     case ns ^. navimStatePaths

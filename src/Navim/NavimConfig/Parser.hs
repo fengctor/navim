@@ -46,7 +46,6 @@ instance Alternative Parser where
 
 -- Combinator primitives
 
-
 satisfy :: (Char -> Bool) -> Parser Char
 satisfy p = Parser $ \case
     (c:cs) | p c -> Just (cs, c)
@@ -83,6 +82,7 @@ spaces1 = () <$ some space
 listWithSep :: Parser b -> Parser a -> Parser [a]
 listWithSep psep p = (:) <$> p <*> many (psep *> p)
 
+
 -- Key parser
 
 modifiers :: [(Modifier, String)]
@@ -104,6 +104,7 @@ parseKeyWithModifier =
     flip (,) <$> (pure <$> parseModifier <* char '-') <*> parseKey
     <|>
     (, []) <$> parseKey
+
 
 -- Command Parser
 
@@ -138,17 +139,15 @@ parseDirHistoryModifier = oneOf dirHistoryModifiers
 
 parseNoInputCommand :: Parser NoInputCommand
 parseNoInputCommand =
-    MoveCursor <$>
-        (string "moveCursor" *> spaces1 *> parseCursorMovement)
+    MoveCursor <$> (string "moveCursor" *> spaces1 *> parseCursorMovement)
     <|>
-    SelectedToClipboard <$>
-        (string "toClipboard" *> spaces1 *> parseClipType)
+    SelectedToClipboard <$> (string "toClipboard" *> spaces1 *> parseClipType)
     <|>
-    ChangeDirHistory <$>
-        parseDirHistoryModifier
+    ChangeDirHistory <$> parseDirHistoryModifier
     <|>
-    PerformSearch <$
-        string "search"
+    PerformSearch <$ string "search"
+    <|>
+    NavigateSelected <$ string "navigate"
 
 contentTypes :: [(ContentType, String)]
 contentTypes =
@@ -170,22 +169,17 @@ parseSelectionModifiyingInputCommand = oneOf selectionModifiyingInputCommands
 
 parseWithInputCommand :: Parser WithInputCommand
 parseWithInputCommand =
-    CreateContent <$>
-        parseContentType
+    CreateContent <$> parseContentType
     <|>
-    ModifySelected <$>
-        parseSelectionModifiyingInputCommand
+    ModifySelected <$> parseSelectionModifiyingInputCommand
     <|>
-    PasteClipboard <$
-        string "pasteClipboard"
+    PasteClipboard <$ string "pasteClipboard"
 
 -- TODO: handle sequence optional withInputCommand
 parseInternalCommand =
-    NoInput <$>
-        parseNoInputCommand
+    NoInput <$> parseNoInputCommand
     <|>
-    WithInput <$>
-        parseWithInputCommand
+    WithInput <$> parseWithInputCommand
     <|>
     Sequence <$>
         (char '[' *>
@@ -197,7 +191,7 @@ parseInternalCommand =
             spaces <*
             char ']'
         ) <*>
-        pure Nothing -- TODO!!!
+        ((spaces *> (Just <$> parseWithInputCommand)) <|> pure Nothing)
 
 escapeCharacters :: [(Char, String)]
 escapeCharacters =
@@ -228,8 +222,6 @@ parseExternalCommand =
 
 parseNavimCommand :: Parser NavimCommand
 parseNavimCommand =
-    Internal <$>
-        parseInternalCommand
+    Internal <$> parseInternalCommand
     <|>
-    External <$>
-        parseExternalCommand
+    External <$> parseExternalCommand

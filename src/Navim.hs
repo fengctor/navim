@@ -86,6 +86,14 @@ defaultCommandMap = Map.fromList
     , ( (KChar 'f', [])
       , Internal . NoInput $ PerformSearch
       )
+    , ( (KBS, [MMeta])
+      , Internal $ Sequence
+            [ MoveCursor CursorTop
+            , MoveCursor CursorDown
+            , NavigateSelected
+            ]
+            Nothing
+      )
     ]
 
 -- Main
