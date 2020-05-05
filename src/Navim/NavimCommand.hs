@@ -1,7 +1,6 @@
 module Navim.NavimCommand where
 
 import           System.Directory
-import           System.Exit
 import           System.Process
 
 import           Control.Lens
@@ -9,9 +8,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 
 import           Data.Char
-import qualified Data.HashMap                as Map
 import           Data.List
-import qualified Data.List.NonEmpty          as NE
 import           Data.Maybe
 
 import           Brick.Main
@@ -121,39 +118,6 @@ commandFunction :: NavimCommand
                 -> EventM n (Next (NavimState NavimCommand))
 commandFunction (Internal i) = continue <=< (liftIO . internalFunction i)
 commandFunction (External e) = suspendAndResume . externalFunction e
-
--- State Transformer (and I don't mean the monad ;))
-buildState :: Maybe (NavimState n) -> IO (NavimState n)
-buildState prevState = do
-    curDir   <- getCurrentDirectory
-    contents <- getDirContents curDir
-    case NE.nonEmpty contents of
-        Nothing -> die "Should never happen (current directory \".\" always here)"
-        Just ne ->
-            case prevState of
-                Nothing ->
-                    pure NavimState
-                        { _navimStatePaths = makeNonEmptyCursor ne
-                        , _navimHistory = DirHistory [] curDir []
-                        , _navimMode = NavigationMode $ Navigation Indicate
-                        , _navimClipboard = NavimClipboard Nothing Replicate
-                        , _navimSearch = ""
-                        , _navimWidth = 1
-                        , _navimConfig = NavimConfig Map.empty
-                        }
-                Just ps ->
-                    pure $
-                        ps & navimStatePaths
-                           %~ adjustCursor (makeNonEmptyCursor ne)
-  where
-    adjustCursor newNec oldNec =
-        moveNextBy (length $ nonEmptyCursorPrev oldNec) newNec
-
-    moveNextBy 0 newNec = newNec
-    moveNextBy n newNec =
-        case nonEmptyCursorSelectNext newNec of
-            Nothing   -> newNec
-            Just nec' -> moveNextBy (n - 1) nec'
 
 toInputMode :: InputCommand
             -> NavimState NavimCommand

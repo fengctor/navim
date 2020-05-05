@@ -2,14 +2,22 @@
 
 module Navim.NavimState where
 
-import           Control.Lens
 
 import           Brick.Types
 
+import           Control.Lens
+
 import           Cursor.Simple.List.NonEmpty
+
+import qualified Data.HashMap                as Map
+import           Data.List
+import qualified Data.List.NonEmpty          as NE
 
 import           Navim.DirContent
 import           Navim.NavimConfig
+
+import           System.Directory
+import           System.Exit
 
 data InputCommand
     = CreateFile
@@ -159,3 +167,41 @@ data NavimState n
     deriving (Show, Eq)
 
 makeLenses ''NavimState
+
+-- State Transformer (and I don't mean the monad ;))
+buildState :: Maybe (NavimState n) -> IO (NavimState n)
+buildState prevState = do
+    curDir   <- getCurrentDirectory
+    contents <- getDirContents curDir
+    let sortedContents = uncurry (++) $
+                             partition
+                                 ((== Directory) . (contentType))
+                                 contents
+    case NE.nonEmpty sortedContents of
+        Nothing -> die "Should never happen (current directory \".\" always here)"
+        Just ne ->
+            case prevState of
+                Nothing ->
+                    pure NavimState
+                        { _navimStatePaths = makeNonEmptyCursor ne
+                        , _navimHistory = DirHistory [] curDir []
+                        , _navimMode = NavigationMode $ Navigation Indicate
+                        , _navimClipboard = NavimClipboard Nothing Replicate
+                        , _navimSearch = ""
+                        , _navimWidth = 1
+                        , _navimConfig = NavimConfig Map.empty
+                        }
+                Just ps ->
+                    pure $
+                        ps & navimStatePaths
+                           %~ adjustCursor (makeNonEmptyCursor ne)
+  where
+    adjustCursor newNec oldNec =
+        moveNextBy (length $ nonEmptyCursorPrev oldNec) newNec
+
+    moveNextBy 0 newNec = newNec
+    moveNextBy n newNec =
+        case nonEmptyCursorSelectNext newNec of
+            Nothing   -> newNec
+            Just nec' -> moveNextBy (n - 1) nec'
+

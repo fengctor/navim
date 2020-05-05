@@ -163,7 +163,7 @@ drawNavim ns =
             , "||n |||a |||v |||i |||m ||"
             , "||__|||__|||__|||__|||__||"
             , "|/__\\|/__\\|/__\\|/__\\|/__\\|"
-            , "A (WIP) file manager written in Haskell by Gary Feng"
+            , "A customizable file manager written in Haskell by Gary Feng"
             ]
 
     pathsWidget =
