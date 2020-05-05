@@ -105,9 +105,21 @@ modifiers =
 parseModifier :: Parser Modifier
 parseModifier = oneOf modifiers
 
--- TODO: allow for non-alphanumeric keys
+specialKeys :: [(Key, String)]
+specialKeys =
+    [ (KBS, "backspace")
+    , (KDel, "del")
+    , (KHome, "home")
+    , (KEnd, "end")
+    , (KPageUp, "pageUp")
+    , (KPageDown, "pageDown")
+    ]
+
 parseKey :: Parser Key
-parseKey = KChar <$> satisfy isAlphaNum
+parseKey =
+    oneOf specialKeys
+    <|>
+    KChar <$> satisfy (not . isSpace)
 
 -- eg: ctrl-a, alt-b, c
 -- TODO: handle modifier ordering

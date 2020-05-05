@@ -27,7 +27,8 @@ ctrl-r : redo
 
 f : search
 
-alt-b : [ moveCursor top
-        , moveCursor down
-        , navigate
-        ]
+alt-backspace : 
+    [ moveCursor top
+    , moveCursor down
+    , navigate
+    ]
