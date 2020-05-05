@@ -28,6 +28,7 @@ import           Text.Wrap
 import           Navim.DirContent
 import           Navim.Instances.Hashable
 import           Navim.NavimCommand
+import           Navim.NavimConfig
 import           Navim.NavimState
 
 defaultCommandMap :: Map
@@ -175,7 +176,7 @@ drawNavim ns =
     statusBar = strWrapDefault $
         case ns ^. navimMode of
             InputMode input ->
-                case input ^. command of
+                case input ^. inputCommand of
                     CreateFile ->
                         "Enter the name of the file to be created"
                     CreateDirectory ->
@@ -242,7 +243,7 @@ drawNavim ns =
                 InputMode input ->
                         input ^. inputResponse
                                . to (++ ['_'])
-                               . to (inputCommandText (input ^. command) ++)
+                               . to (inputCommandText (input ^. inputCommand) ++)
                                . to withBottomCursor
 
     inputCommandText CreateFile      = "File name: "
@@ -357,7 +358,7 @@ dispatchKey ns key navAction =
                         ns & navimMode . _MetaMode . metaInput
                            %~ safeInit
         (MetaMode meta, KEnter) ->
-            meta ^. metaInput . to (metaCommand ns)
+            meta ^. metaInput . to (runMetaCommand ns)
 
         (InputMode _, KChar c) ->
             continue $
@@ -368,7 +369,7 @@ dispatchKey ns key navAction =
                 ns & navimMode . _InputMode . inputResponse
                    %~ safeInit
         (InputMode input, KEnter) ->
-            input ^. command
+            input ^. inputCommand
                    . to (performInputCommand ns)
         (InputMode _, _) ->
             continue ns -- TODO!!!!!!!!
@@ -380,7 +381,7 @@ dispatchKey ns key navAction =
     safeInit xs = init xs
 
     performInputCommand ns cmd = do
-        dcResult <- liftIO . inputCommand $ ns
+        dcResult <- liftIO . runInputCommand $ ns
         ns'      <- liftIO . buildState $ Just ns
         continue $
             ns' & navimMode

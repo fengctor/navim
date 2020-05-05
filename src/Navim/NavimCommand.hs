@@ -21,6 +21,7 @@ import qualified Cursor.List.NonEmpty        as NEC (NonEmptyCursor (..))
 import           Cursor.Simple.List.NonEmpty
 
 import           Navim.DirContent
+import           Navim.NavimConfig
 import           Navim.NavimState
 
 data CursorMovement
@@ -44,7 +45,7 @@ data NoInputCommand
 
 data WithInputCommand
     = CreateContent ContentType
-    | ModifySelected Command
+    | ModifySelected InputCommand
     | PasteClipboard
     deriving (Show, Eq)
 
@@ -151,10 +152,14 @@ buildState prevState = do
             Nothing   -> newNec
             Just nec' -> moveNextBy (n - 1) nec'
 
-toInputMode :: Command -> NavimState NavimCommand -> NavimState NavimCommand
+toInputMode :: InputCommand
+            -> NavimState NavimCommand
+            -> NavimState NavimCommand
 toInputMode cmd = navimMode .~ InputMode (Input cmd "")
 
-modifySelectedWith :: Command -> NavimState NavimCommand -> NavimState NavimCommand
+modifySelectedWith :: InputCommand
+                   -> NavimState NavimCommand
+                   -> NavimState NavimCommand
 modifySelectedWith cmd ns =
     case ns ^. navimStatePaths
              . to nonEmptyCursorCurrent of
@@ -273,8 +278,10 @@ previewOrNavigate ns =
                                 ((== nextFocus) . getPath)
                                 paths
 
-metaCommand :: NavimState NavimCommand -> String -> EventM n (Next (NavimState NavimCommand))
-metaCommand ns input =
+runMetaCommand :: NavimState NavimCommand
+               -> String
+               -> EventM n (Next (NavimState NavimCommand))
+runMetaCommand ns input =
     case input of
         ":q" -> halt ns
         -- TODO: other meta commands
@@ -321,12 +328,12 @@ metaCommand ns input =
                     .~ NavigationMode (Navigation Indicate)
 
 -- TODO: maybe having Command as a param is a better idea
-inputCommand :: NavimState n -> IO DirContentActionResult
-inputCommand ns =
+runInputCommand :: NavimState n -> IO DirContentActionResult
+runInputCommand ns =
     case ns ^. navimMode of
         InputMode input ->
             let entered = input ^. inputResponse in
-            case input ^. command of
+            case input ^. inputCommand of
                 CreateFile ->
                     createDirContentSafe $ DirContent File entered
                 CreateDirectory ->

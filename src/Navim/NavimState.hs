@@ -4,17 +4,14 @@ module Navim.NavimState where
 
 import           Control.Lens
 
-import           Data.HashMap                (Map)
-
 import           Brick.Types
 
 import           Cursor.Simple.List.NonEmpty
 
-import           Graphics.Vty.Input.Events
-
 import           Navim.DirContent
+import           Navim.NavimConfig
 
-data Command
+data InputCommand
     = CreateFile
     | CreateDirectory
     | Remove
@@ -80,8 +77,8 @@ messageString (Error command reason) =
 data Message
     = Indicate
     | Neutral String
-    | Success Command
-    | Error Command DirContentActionError
+    | Success InputCommand
+    | Error InputCommand DirContentActionError
     deriving (Show, Eq)
 
 newtype Navigation
@@ -98,7 +95,7 @@ makeLenses ''Meta
 
 data Input
     = Input
-        { _command       :: Command
+        { _inputCommand  :: InputCommand
         , _inputResponse :: String
         }
     deriving (Show, Eq)
@@ -149,13 +146,6 @@ data NavimClipboard
     deriving (Show, Eq)
 makeLenses ''NavimClipboard
 
--- TODO: other fields
-data NavimConfig commandType
-    = NavimConfig
-        { _commandMap :: Map (Key, [Modifier]) commandType
-        }
-    deriving (Show, Eq)
-
 data NavimState n
     = NavimState
         { _navimStatePaths :: NonEmptyCursor DirContent
@@ -168,5 +158,4 @@ data NavimState n
         }
     deriving (Show, Eq)
 
-makeLenses ''NavimConfig
 makeLenses ''NavimState
