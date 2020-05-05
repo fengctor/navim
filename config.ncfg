@@ -1,0 +1,33 @@
+j : moveCursor down
+k : moveCursor up
+
+J : [ moveCursor down
+    , moveCursor down
+    , moveCursor down
+    ]
+K : [moveCursor up, moveCursor up, moveCursor up]
+
+g : moveCursor top
+G : moveCursor bottom
+
+n : create file
+N : create directory
+
+d : remove
+r : rename
+
+y : toClipboard copy
+x : toClipboard cut
+p : pasteClipboard
+
+v : bash "vim"
+
+u      : undo
+ctrl-r : redo
+
+f : search
+
+alt-b : [ moveCursor top
+        , moveCursor down
+        , navigate
+        ]

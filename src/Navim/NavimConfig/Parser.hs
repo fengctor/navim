@@ -7,6 +7,8 @@ import           Control.Applicative
 
 import           Data.Bool
 import           Data.Char
+import           Data.HashMap              (Map)
+import qualified Data.HashMap              as Map
 
 import           Graphics.Vty.Input.Events
 
@@ -14,6 +16,7 @@ import           Navim.NavimCommand
 import           Navim.NavimConfig
 
 import           Navim.DirContent          (ContentType (..))
+import           Navim.Instances.Hashable
 import           Navim.NavimState          (ClipType (..), InputCommand (..))
 
 newtype Parser a
@@ -70,8 +73,8 @@ oneOf =
         )
         empty
 
-space :: Parser ()
-space = () <$ satisfy isSpace
+space :: Parser Char
+space = satisfy isSpace
 
 spaces :: Parser ()
 spaces = () <$ many space
@@ -79,9 +82,20 @@ spaces = () <$ many space
 spaces1 :: Parser ()
 spaces1 = () <$ some space
 
+newline :: Parser ()
+newline = () <$ satisfy (== '\n')
+
+newlines :: Parser ()
+newlines = () <$ many newline
+
+newlines1 :: Parser ()
+newlines1 = () <$ some newline
+
 listWithSep :: Parser b -> Parser a -> Parser [a]
 listWithSep psep p = (:) <$> p <*> many (psep *> p)
 
+listWithSepEnding :: Parser b -> Parser a -> Parser [a]
+listWithSepEnding psep p = many (p <* psep)
 
 -- Key parser
 
@@ -99,11 +113,10 @@ parseKey :: Parser Key
 parseKey = KChar <$> satisfy isAlphaNum
 
 -- eg: ctrl-a, alt-b, c
+-- TODO: handle modifier ordering
 parseKeyWithModifier :: Parser (Key, [Modifier])
 parseKeyWithModifier =
-    flip (,) <$> (pure <$> parseModifier <* char '-') <*> parseKey
-    <|>
-    (, []) <$> parseKey
+    flip (,) <$> (many $ parseModifier <* char '-') <*> parseKey
 
 
 -- Command Parser
@@ -169,7 +182,7 @@ parseSelectionModifiyingInputCommand = oneOf selectionModifiyingInputCommands
 
 parseWithInputCommand :: Parser WithInputCommand
 parseWithInputCommand =
-    CreateContent <$> parseContentType
+    CreateContent <$> (string "create" *> spaces1 *> parseContentType)
     <|>
     ModifySelected <$> parseSelectionModifiyingInputCommand
     <|>
@@ -217,11 +230,25 @@ parseExternalCommand :: Parser ExternalCommand
 parseExternalCommand =
     BashCommandOnSelected <$>
         (string "bash" *>
-            spaces1 *>
-            parseStringLiteral)
+         spaces1 *>
+         parseStringLiteral)
 
 parseNavimCommand :: Parser NavimCommand
 parseNavimCommand =
     Internal <$> parseInternalCommand
     <|>
     External <$> parseExternalCommand
+
+parseCommandMap :: Parser (Map (Key, [Modifier]) NavimCommand)
+parseCommandMap =
+    Map.fromList <$>
+        (newlines *>
+         (listWithSepEnding newlines1 $
+             (,) <$> (parseKeyWithModifier <* spaces <* char ':' <* spaces)
+                 <*> parseNavimCommand
+         )
+        )
+
+parseNavimConfigWithNavimCommand :: Parser (NavimConfig NavimCommand)
+parseNavimConfigWithNavimCommand =
+    NavimConfig <$> parseCommandMap
