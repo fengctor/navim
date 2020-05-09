@@ -113,7 +113,7 @@ data ResourceName
 
 
 strWrapDefault :: String -> Widget n
-strWrapDefault = strWrapWith (WrapSettings False True)
+strWrapDefault = strWrapWith (WrapSettings True True)
 
 -- TUI App Components
 navimApp :: App (NavimState NavimCommand) e ResourceName
@@ -129,6 +129,8 @@ navimApp = App
               , ("dir", fg brightCyan)
               , ("file" <> "selected", withStyle currentAttr underline)
               , ("dir" <> "selected", withStyle (bg green) underline)
+              , ("filesize", fg brightYellow)
+              , ("filesize" <> "selected", withStyle currentAttr underline)
               , ("header", fg white)
               , ("success", bg green)
               , ("error", bg red)
@@ -145,7 +147,7 @@ drawNavim ns =
       <=>
       hBorder
       <=>
-      padBottom Max pathsWidget
+      padBottom Max (pathsWidget <+> vBorder <+> fileSizesWidget)
       <=>
       hBorder
       <=>
@@ -171,7 +173,8 @@ drawNavim ns =
         . viewport PathsWidget Vertical
         . vBox
         . mconcat
-        $ [ drawDirContent False <$> reverse (nonEmptyCursorPrev pathsCursor)
+        $ [ [str "PATH"]
+          , drawDirContent False <$> reverse (nonEmptyCursorPrev pathsCursor)
           , [ visible
               . drawDirContent True
               $ nonEmptyCursorCurrent pathsCursor
@@ -179,7 +182,20 @@ drawNavim ns =
           , drawDirContent False <$> nonEmptyCursorNext pathsCursor
           ]
 
-    pathsCursor = ns ^. navimStatePaths
+    fileSizesWidget =
+        vBox
+        . mconcat
+        $ [ [str "FILE SIZE"]
+          , withAttr "filesize" . str . show <$> reverse (nonEmptyCursorPrev sizesCursor)
+          , [ withAttr ("filesize" <> "selected")
+              . str
+              . show
+              $ nonEmptyCursorCurrent sizesCursor]
+          , withAttr "filesize" . str . show <$> nonEmptyCursorNext sizesCursor
+          ]
+
+    pathsCursor = ns ^. navimPaths
+    sizesCursor = ns ^. navimFileSizes
 
     statusBar = strWrapDefault $
         case ns ^. navimMode of
@@ -246,11 +262,11 @@ drawNavim ns =
                                          Error _ _ -> withAttr "error")
                 MetaMode meta ->
                     meta ^. metaInput
-                          . to (++ ['_'])
+                          . to (++ [' '])
                           . to withBottomCursor
                 InputMode input ->
                         input ^. inputResponse
-                               . to (++ ['_'])
+                               . to (++ [' '])
                                . to (inputCommandText (input ^. inputCommand) ++)
                                . to withBottomCursor
 
@@ -261,7 +277,7 @@ drawNavim ns =
     inputCommandText Copy            = "Should never use this... TODO"
     inputCommandText Paste           = "Confirm (y/n): "
 
-    -- input has '_' appended to the end...
+    -- input has ' ' appended to the end...
     -- this is a hack
     -- TODO: figure out how to get cursor to take up the next line
     --       when input is at the end of a line

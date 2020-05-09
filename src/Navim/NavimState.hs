@@ -5,10 +5,13 @@ module Navim.NavimState where
 
 import           Brick.Types
 
+import           Control.Applicative
 import           Control.Lens
 
 import           Cursor.Simple.List.NonEmpty
 
+import           Data.Bifunctor
+import           Data.Bool
 import qualified Data.HashMap                as Map
 import           Data.List
 import qualified Data.List.NonEmpty          as NE
@@ -18,6 +21,7 @@ import           Navim.NavimConfig
 
 import           System.Directory
 import           System.Exit
+import           System.IO
 
 data InputCommand
     = CreateFile
@@ -29,7 +33,7 @@ data InputCommand
     deriving (Show, Eq)
 
 messageString :: Message -> String
-messageString Indicate = "--NAVIGATION--"
+messageString Indicate = "-- NAVIGATION --"
 
 messageString (Neutral msg) = msg
 
@@ -154,15 +158,39 @@ data NavimClipboard
     deriving (Show, Eq)
 makeLenses ''NavimClipboard
 
+-- TODO: move this data?
+newtype FileSize = FileSize (Maybe Integer)
+    deriving Eq
+
+instance Show FileSize where
+    show (FileSize mi) =
+        case mi of
+            Nothing -> "--"
+            Just n  -> let (unit, size) = asFileSize n in
+                           size ++ " " ++ unit
+      where
+        asFileSize =
+            second reverse
+            . last
+            . zip ["B", "KB", "MB", "GB", "TB"]
+            . chop 3
+            . reverse
+            . show
+        chop _ [] = []
+        chop n xs =
+            let (pre, suf) = splitAt n xs in
+                pre : chop n suf
+
 data NavimState n
     = NavimState
-        { _navimStatePaths :: NonEmptyCursor DirContent
-        , _navimHistory    :: DirHistory
-        , _navimMode       :: Mode
-        , _navimClipboard  :: NavimClipboard
-        , _navimSearch     :: String
-        , _navimWidth      :: Int
-        , _navimConfig     :: NavimConfig n
+        { _navimPaths     :: NonEmptyCursor DirContent
+        , _navimFileSizes :: NonEmptyCursor FileSize
+        , _navimHistory   :: DirHistory
+        , _navimMode      :: Mode
+        , _navimClipboard :: NavimClipboard
+        , _navimSearch    :: String
+        , _navimWidth     :: Int
+        , _navimConfig    :: NavimConfig n
         }
     deriving (Show, Eq)
 
@@ -179,11 +207,13 @@ buildState prevState = do
                                  contents
     case NE.nonEmpty sortedContents of
         Nothing -> die "Should never happen (current directory \".\" always here)"
-        Just ne ->
+        Just ne -> do
+            fileSizes <- traverse getFileSize ne
             case prevState of
                 Nothing ->
                     pure NavimState
-                        { _navimStatePaths = makeNonEmptyCursor ne
+                        { _navimPaths = makeNonEmptyCursor ne
+                        , _navimFileSizes = makeNonEmptyCursor fileSizes
                         , _navimHistory = DirHistory [] curDir []
                         , _navimMode = NavigationMode $ Navigation Indicate
                         , _navimClipboard = NavimClipboard Nothing Replicate
@@ -193,8 +223,10 @@ buildState prevState = do
                         }
                 Just ps ->
                     pure $
-                        ps & navimStatePaths
+                        ps & navimPaths
                            %~ adjustCursor (makeNonEmptyCursor ne)
+                           & navimFileSizes
+                           %~ adjustCursor (makeNonEmptyCursor fileSizes)
   where
     adjustCursor newNec oldNec =
         moveNextBy (length $ nonEmptyCursorPrev oldNec) newNec
@@ -205,3 +237,7 @@ buildState prevState = do
             Nothing   -> newNec
             Just nec' -> moveNextBy (n - 1) nec'
 
+    getFileSize (DirContent Directory _) =
+        pure $ FileSize Nothing
+    getFileSize (DirContent File path) =
+        FileSize . Just <$> withFile path ReadMode hFileSize

@@ -1,3 +1,5 @@
+{-# LANGUAGE Rank2Types #-}
+
 module Navim.NavimCommand where
 
 import           System.Directory
@@ -128,7 +130,7 @@ modifySelectedWith :: InputCommand
                    -> NavimState NavimCommand
                    -> NavimState NavimCommand
 modifySelectedWith cmd ns =
-    case ns ^. navimStatePaths
+    case ns ^. navimPaths
              . to nonEmptyCursorCurrent of
         DirContent Directory "." ->
             ns & navimMode
@@ -142,7 +144,7 @@ modifySelectedWith cmd ns =
 
 selectedToClipboard :: ClipType -> NavimState NavimCommand -> NavimState NavimCommand
 selectedToClipboard ct ns =
-    case ns ^. navimStatePaths
+    case ns ^. navimPaths
              . to nonEmptyCursorCurrent of
         DirContent Directory name ->
             ns & navimMode
@@ -174,7 +176,7 @@ bashCommandOnSelected cmdStr ns =
     ns <$
     callProcess
         cmdStr
-        [ns ^. navimStatePaths
+        [ns ^. navimPaths
              . to (getPath . nonEmptyCursorCurrent)]
 
 performSearch :: NavimState NavimCommand -> NavimState NavimCommand
@@ -184,7 +186,7 @@ performSearch ns =
        .~ case nsSearch of
               "" -> Indicate
               _  -> Neutral ('/' : nsSearch)
-       & navimStatePaths
+       & navimPaths
        %~ \paths ->
            case nsSearch of
                "" -> paths
@@ -200,21 +202,24 @@ performSearch ns =
                    . to (toLower <$>)
 
 -- Note: clears the error message too
-moveCursorWith :: (NonEmptyCursor DirContent -> Maybe (NonEmptyCursor DirContent))
+moveCursorWith :: (forall a . NonEmptyCursor a -> Maybe (NonEmptyCursor a))
                -> NavimState NavimCommand
                -> NavimState NavimCommand
 moveCursorWith move ns =
-    case move $ ns ^. navimStatePaths of
-        Nothing     -> ns & navimMode . _NavigationMode . displayMessage
-                          .~ Indicate
-        Just newNec -> ns & navimStatePaths
-                          .~ newNec
-                          & navimMode . _NavigationMode . displayMessage
-                          .~ Indicate
-
+    case (move $ ns ^. navimPaths, move $ ns ^. navimFileSizes) of
+        (Just pnec, Just snec) ->
+            ns & navimPaths
+               .~ pnec
+               & navimFileSizes
+               .~ snec
+               & navimMode . _NavigationMode . displayMessage
+               .~ Indicate
+        _ ->
+            ns & navimMode . _NavigationMode . displayMessage
+               .~ Indicate
 navigateSelected :: NavimState NavimCommand -> IO (NavimState NavimCommand)
 navigateSelected ns =
-    case ns ^. navimStatePaths
+    case ns ^. navimPaths
              . to nonEmptyCursorCurrent of
         DirContent File fp ->
             return $
@@ -229,14 +234,14 @@ navigateSelected ns =
             liftIO $ setCurrentDirectory fp
             newCurDir <- getCurrentDirectory
             ns'       <- buildState . Just $
-                             ns & navimStatePaths
+                             ns & navimPaths
                                 %~ nonEmptyCursorReset
             return $
                 ns' & navimMode . _NavigationMode . displayMessage
                     .~ Indicate
                     & navimHistory
                     %~ withNewCurrentDir newCurDir
-                    & navimStatePaths
+                    & navimPaths
                     %~ \paths ->
                         fromMaybe (nonEmptyCursorReset paths) $
                             nonEmptyCursorSearch
@@ -246,14 +251,14 @@ navigateSelected ns =
 -- TODO: use navigate
 previewOrNavigate :: NavimState NavimCommand -> EventM n (Next (NavimState NavimCommand))
 previewOrNavigate ns =
-    case ns ^. navimStatePaths
+    case ns ^. navimPaths
              . to nonEmptyCursorCurrent of
         DirContent File fp ->
             suspendAndResume $
                 ns <$
                 callProcess
                     "less"
-                    [ns ^. navimStatePaths
+                    [ns ^. navimPaths
                          . to (getPath . nonEmptyCursorCurrent)]
         DirContent Directory fp -> do
             let (curDir, _) = ns ^. navimHistory
@@ -263,14 +268,14 @@ previewOrNavigate ns =
             liftIO $ setCurrentDirectory fp
             newCurDir <- liftIO getCurrentDirectory
             ns'       <- liftIO . buildState . Just $
-                             ns & navimStatePaths
+                             ns & navimPaths
                                 %~ nonEmptyCursorReset
             continue $
                 ns' & navimMode . _NavigationMode . displayMessage
                     .~ Indicate
                     & navimHistory
                     %~ withNewCurrentDir newCurDir
-                    & navimStatePaths
+                    & navimPaths
                     %~ \paths ->
                         fromMaybe (nonEmptyCursorReset paths) $
                             nonEmptyCursorSearch
@@ -314,7 +319,7 @@ runMetaCommand ns input =
                    .~ NavigationMode (Navigation Indicate)
                    & navimSearch
                    .~ searchQuery
-                   & navimStatePaths
+                   & navimPaths
                    %~ \paths ->
                        fromMaybe paths $
                            nonEmptyCursorCircularSearch
@@ -359,7 +364,7 @@ runInputCommand ns =
                             pure $ DCError Cancelled
         _ -> pure $ DCError Cancelled -- TODO: kind of a silent error
  where
-    onSelected f = ns ^. navimStatePaths
+    onSelected f = ns ^. navimPaths
                        . to (f . nonEmptyCursorCurrent)
 
 changeDirHistoryWith :: (DirHistory -> DirHistory) -> NavimState n -> IO (NavimState n)
