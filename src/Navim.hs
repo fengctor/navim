@@ -2,6 +2,7 @@
 
 module Navim where
 
+import           Data.Bifunctor
 import           Data.Bool
 import           Data.HashMap                (Map)
 import qualified Data.HashMap                as Map
@@ -139,21 +140,14 @@ navimApp = App
 
 -- UI Drawer
 drawNavim :: NavimState NavimCommand -> [Widget ResourceName]
-drawNavim ns =
-    [
-      hBorder
-      <=>
-      header
-      <=>
-      hBorder
-      <=>
-      padBottom Max (pathsWidget <+> vBorder <+> fileSizesWidget)
-      <=>
-      hBorder
-      <=>
-      statusBar
-      <=>
-      reportExtent InputBar inputBar
+drawNavim ns = pure . vBox $
+    [ hBorder
+    , header
+    , hBorder
+    , padBottom Max pathsWidget
+    , hBorder
+    , statusBar
+    , reportExtent InputBar inputBar
     ]
   where
     header =
@@ -169,29 +163,25 @@ drawNavim ns =
             ]
 
     pathsWidget =
-        padRight Max
-        . viewport PathsWidget Vertical
+        viewport PathsWidget Vertical
         . vBox
+        . fmap (uncurry (<+>) . first (padRight Max))
         . mconcat
-        $ [ [str "PATH"]
-          , drawDirContent False <$> reverse (nonEmptyCursorPrev pathsCursor)
-          , [ visible
-              . drawDirContent True
-              $ nonEmptyCursorCurrent pathsCursor
+        $ [ [(str "PATH", str "FILE SIZE")]
+          , bimap (padRight Max . drawDirContent False) (drawFileSize False)
+            <$> reverse
+                (zip
+                    (nonEmptyCursorPrev pathsCursor)
+                    (nonEmptyCursorPrev sizesCursor))
+          , [ bimap
+                  (visible . drawDirContent True . nonEmptyCursorCurrent)
+                  (visible . drawFileSize True . nonEmptyCursorCurrent)
+              $ (pathsCursor, sizesCursor)
             ]
-          , drawDirContent False <$> nonEmptyCursorNext pathsCursor
-          ]
-
-    fileSizesWidget =
-        vBox
-        . mconcat
-        $ [ [str "FILE SIZE"]
-          , withAttr "filesize" . str . show <$> reverse (nonEmptyCursorPrev sizesCursor)
-          , [ withAttr ("filesize" <> "selected")
-              . str
-              . show
-              $ nonEmptyCursorCurrent sizesCursor]
-          , withAttr "filesize" . str . show <$> nonEmptyCursorNext sizesCursor
+          , bimap (drawDirContent False) (drawFileSize False)
+            <$> zip
+                (nonEmptyCursorNext pathsCursor)
+                (nonEmptyCursorNext sizesCursor)
           ]
 
     pathsCursor = ns ^. navimPaths
@@ -296,6 +286,12 @@ drawDirContent selected dc =
             case contentType dc of
                 File      -> "file"
                 Directory -> "dir"
+
+drawFileSize :: Bool -> FileSize -> Widget n
+drawFileSize selected =
+    withAttr (bool id (<> "selected") selected "filesize")
+    . str
+    . show
 
 -- Event Handler
 handleEvent :: NavimState NavimCommand

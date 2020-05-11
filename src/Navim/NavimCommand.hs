@@ -217,6 +217,7 @@ moveCursorWith move ns =
         _ ->
             ns & navimMode . _NavigationMode . displayMessage
                .~ Indicate
+
 navigateSelected :: NavimState NavimCommand -> IO (NavimState NavimCommand)
 navigateSelected ns =
     case ns ^. navimPaths
@@ -237,16 +238,30 @@ navigateSelected ns =
                              ns & navimPaths
                                 %~ nonEmptyCursorReset
             return $
+                let newPaths = getNewPaths nextFocus (ns' ^. navimPaths) in
                 ns' & navimMode . _NavigationMode . displayMessage
                     .~ Indicate
                     & navimHistory
                     %~ withNewCurrentDir newCurDir
                     & navimPaths
-                    %~ \paths ->
-                        fromMaybe (nonEmptyCursorReset paths) $
-                            nonEmptyCursorSearch
-                                ((== nextFocus) . getPath)
-                                paths
+                    .~ newPaths
+                    & navimFileSizes
+                    %~ (syncCursorWith newPaths . nonEmptyCursorReset)
+  where
+    getNewPaths nextFocus paths =
+        fromMaybe (nonEmptyCursorReset paths) $
+            nonEmptyCursorSearch
+                ((== nextFocus) . getPath)
+                paths
+
+    syncCursorWith goal toSync =
+        case ( nonEmptyCursorSelectPrev goal
+             , nonEmptyCursorSelectNext toSync
+             ) of
+            (Just goalPrev, Just toSyncNext) ->
+                syncCursorWith goalPrev toSyncNext
+            _ ->
+                toSync
 
 -- TODO: use navigate
 previewOrNavigate :: NavimState NavimCommand -> EventM n (Next (NavimState NavimCommand))
@@ -260,27 +275,8 @@ previewOrNavigate ns =
                     "less"
                     [ns ^. navimPaths
                          . to (getPath . nonEmptyCursorCurrent)]
-        DirContent Directory fp -> do
-            let (curDir, _) = ns ^. navimHistory
-                                  . currentDirectory
-                                  . to nameAndDirectory
-            let nextFocus = if fp == ".." then curDir else "."
-            liftIO $ setCurrentDirectory fp
-            newCurDir <- liftIO getCurrentDirectory
-            ns'       <- liftIO . buildState . Just $
-                             ns & navimPaths
-                                %~ nonEmptyCursorReset
-            continue $
-                ns' & navimMode . _NavigationMode . displayMessage
-                    .~ Indicate
-                    & navimHistory
-                    %~ withNewCurrentDir newCurDir
-                    & navimPaths
-                    %~ \paths ->
-                        fromMaybe (nonEmptyCursorReset paths) $
-                            nonEmptyCursorSearch
-                                ((== nextFocus) . getPath)
-                                paths
+        DirContent Directory fp ->
+            (liftIO . navigateSelected >=> continue) ns
 
 runMetaCommand :: NavimState NavimCommand
                -> String

@@ -27,7 +27,7 @@ newtype Parser a
 instance Functor Parser where
     -- fmap :: (a -> b) -> Parser a -> Parser b
     fmap f (Parser p) =
-        Parser $ ((fmap . fmap) f) . p
+        Parser $ (fmap . fmap) f . p
 
 instance Applicative Parser where
     -- pure :: a -> Parser a
@@ -125,7 +125,7 @@ parseKey =
 -- TODO: handle modifier ordering
 parseKeyWithModifier :: Parser (Key, [Modifier])
 parseKeyWithModifier =
-    flip (,) <$> (many $ parseModifier <* char '-') <*> parseKey
+    flip (,) <$> many (parseModifier <* char '-') <*> parseKey
 
 
 -- Command Parser
@@ -252,12 +252,11 @@ parseCommandMap :: Parser (Map (Key, [Modifier]) NavimCommand)
 parseCommandMap =
     Map.fromList <$>
         (newlines *>
-         (listWithSep newlines1 $
-             (,) <$> (parseKeyWithModifier <* spaces <* char ':' <* spaces)
-                 <*> parseNavimCommand
-         ) <*
-         newlines
-        )
+         listWithSep
+             newlines1
+                 ((,) <$> (parseKeyWithModifier <* spaces <* char ':' <* spaces)
+                      <*> parseNavimCommand) <*
+         newlines)
 
 parseNavimConfigWithNavimCommand :: Parser (NavimConfig NavimCommand)
 parseNavimConfigWithNavimCommand =

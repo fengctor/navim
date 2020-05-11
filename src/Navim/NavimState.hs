@@ -172,7 +172,7 @@ instance Show FileSize where
         asFileSize =
             second reverse
             . last
-            . zip ["B", "KB", "MB", "GB", "TB"]
+            . zip ["B", "K", "M", "G", "T"]
             . chop 3
             . reverse
             . show
@@ -203,7 +203,7 @@ buildState prevState = do
     contents <- getDirContents curDir
     let sortedContents = uncurry (++) $
                              partition
-                                 ((== Directory) . (contentType))
+                                 ((== Directory) . contentType)
                                  contents
     case NE.nonEmpty sortedContents of
         Nothing -> die "Should never happen (current directory \".\" always here)"
